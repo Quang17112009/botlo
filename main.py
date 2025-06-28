@@ -176,11 +176,11 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # --- Hàm kết thúc phiên và trả kết quả ---
 async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_override=None, target_chat_id=None) -> None:
+    # Khai báo global ở đầu hàm, trước bất kỳ lần truy cập nào đến biến này
+    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT, current_session_id
+    
     # Lấy chat_id để gửi tin nhắn, ưu tiên target_chat_id nếu được cung cấp
     chat_id = target_chat_id if target_chat_id else (context.job.chat_id if context.job else update.effective_chat.id)
-    
-    # Khai báo global ở đầu hàm, trước bất kỳ lần truy cập nào đến biến này
-    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT 
     
     # Kiểm tra xem có phiên nào đang hoạt động không
     if not session_is_active and not dice_override: # Nếu không có phiên và không phải là lệnh can thiệp
@@ -264,6 +264,8 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
 # Hàm được gọi tự động bởi job_queue
 async def auto_end_session(context: ContextTypes.DEFAULT_TYPE):
     # Dừng job hiện tại để tránh chạy lại
+    # Đảm bảo current_session_id được cập nhật trước khi hủy job
+    global current_session_id # Khai báo global
     for job in context.job_queue.get_jobs_by_name(f"end_session_{current_session_id}"):
         job.schedule_removal()
     
@@ -280,6 +282,7 @@ async def admin_end_session_manual(update: Update, context: ContextTypes.DEFAULT
         return
     
     # Hủy job tự động kết thúc nếu có
+    global current_session_id # Khai báo global
     for job in context.job_queue.get_jobs_by_name(f"end_session_{current_session_id}"):
         job.schedule_removal()
 
@@ -303,7 +306,7 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not all(1 <= d <= 6 for d in dice_values):
             raise ValueError("Xúc xắc phải là số từ 1 đến 6.")
         
-        global session_is_active
+        global session_is_active, current_session_id # Khai báo global
         if not session_is_active or active_group_chat_id != target_chat_id:
             await update.message.reply_text(f"Hiện không có phiên nào đang hoạt động trong nhóm ID {target_chat_id} này.")
             return
@@ -431,50 +434,139 @@ async def admin_set_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except ValueError:
         await update.message.reply_text("Số tiền Jackpot không hợp lệ.")
 
-# --- Lệnh /help (Người dùng) ---
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    help_text = """
-✨ ♦️ SUNWIN CASINO - HƯỚNG DẪN SỬ DỤNG ♦️ ✨
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎲 TÀI XỈU ONLINE - UY TÍN HÀNG ĐẦU 🎲
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📌 LỆNH CƠ BẢN:
-• /start - Bắt đầu tương tác với bot và xem hướng dẫn cơ bản
-• /help - Xem hướng dẫn chi tiết các lệnh
-• /check - Kiểm tra số dư hiện tại của bạn
-• /top - (Chưa triển khai) Bảng xếp hạng người chơi
-• /jackpot - (Chưa triển khai) Xem tiền hũ Jackpot hiện tại
+# --- Lệnh Người dùng: Bảng xếp hạng (/top) ---
+async def top_players(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not users_data:
+        await update.message.reply_text("Chưa có dữ liệu người chơi để xếp hạng.")
+        return
+    
+    # Sắp xếp người chơi theo số dư giảm dần
+    sorted_users = sorted(users_data.items(), key=lambda item: item[1]['balance'], reverse=True)
+    
+    top_message = "🏆 BẢNG XẾP HẠNG NGƯỜI CHƠI 🏆\n━━━━━━━━━━━━━━━━\n"
+    for i, (user_id, data) in enumerate(sorted_users[:5]): # Lấy top 5
+        top_message += f"{i+1}. {data['username']}: {data['balance']:,} VNĐ\n"
+    
+    await update.message.reply_text(top_message)
 
-🎯 LỆNH CHƠI:
-• /tai [số tiền/all] - Đặt cược vào cửa TÀI (tổng điểm 11-18)
-• /xiu [số tiền/all] - Đặt cược vào cửa XỈU (tổng điểm 3-10)
+# --- Lệnh Người dùng: Xem Jackpot (/jackpot) ---
+async def view_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global JACKPOT_AMOUNT
+    await update.message.reply_text(f"💰 TIỀN HŨ JACKPOT HIỆN TẠI: {JACKPOT_AMOUNT:,} VNĐ")
 
-Để chơi, đợi admin /newgame để mở phiên mới.
+# --- Lệnh Người dùng: Chế độ thường (/taixiu) ---
+async def taixiu_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    info_text = """
+🎲 CHẾ ĐỘ TÀI XỈU THƯỜNG 🎲
+━━━━━━━━━━━━━━━━
+• Đặt cược vào TÀI (tổng 11-18) hoặc XỈU (tổng 3-10).
+• Có cơ hội nổ JACKPOT khi ra 3 con 1 hoặc 3 con 6.
+• Lệnh đặt cược:
+  • /tai [số tiền/all]
+  • /xiu [số tiền/all]
 """
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(info_text)
+
+# --- Lệnh Người dùng: Chế độ MD5 minh bạch (/taixiumd5) ---
+async def taixiumd5_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    info_text = """
+💡 CHẾ ĐỘ MD5 MINH BẠCH 💡
+━━━━━━━━━━━━━━━━
+• Kết quả mỗi phiên được tạo ra dựa trên một chuỗi ngẫu nhiên và ID phiên, sau đó được mã hóa bằng MD5.
+• Mã MD5 được công bố TRƯỚC KHI mở bát, đảm bảo tính công bằng.
+• Sau khi phiên kết thúc, bot sẽ công bố mã xác minh đầy đủ (ID phiên + chuỗi ngẫu nhiên + kết quả xúc xắc). Bạn có thể tự mã hóa mã xác minh bằng MD5 để kiểm tra trùng khớp với mã đã công bố.
+• Lệnh đặt cược:
+  • /tai [số tiền/all]
+  • /xiu [số tiền/all]
+"""
+    await update.message.reply_text(info_text)
+
+# --- Lệnh Người dùng: Chuyển tiền (/chuyen) ---
+async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text("Cú pháp: /chuyen [ID người nhận] [số tiền]")
+        return
+    
+    sender_id = update.effective_user.id
+    sender_username = update.effective_user.first_name
+
+    if sender_id not in users_data:
+        users_data[sender_id] = {'balance': 100000, 'username': sender_username}
+
+    try:
+        receiver_id = int(args[0])
+        amount = int(args[1])
+
+        if amount <= 0:
+            await update.message.reply_text("Số tiền chuyển phải lớn hơn 0.")
+            return
+
+        if sender_id == receiver_id:
+            await update.message.reply_text("Bạn không thể tự chuyển tiền cho chính mình.")
+            return
+
+        if users_data[sender_id]['balance'] < amount:
+            await update.message.reply_text(f"Bạn không đủ số dư để chuyển. Số dư hiện tại: {users_data[sender_id]['balance']:,} VNĐ")
+            return
+        
+        # Tạo tài khoản nếu người nhận chưa có
+        if receiver_id not in users_data:
+            users_data[receiver_id] = {'balance': 100000, 'username': f"User_{receiver_id}"}
+        
+        users_data[sender_id]['balance'] -= amount
+        users_data[receiver_id]['balance'] += amount
+
+        await update.message.reply_text(
+            f"✅ GIAO DỊCH THÀNH CÔNG ✅\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"Người chuyển: {sender_username}\n"
+            f"Người nhận (ID): {receiver_id}\n"
+            f"Số tiền: {amount:,} VNĐ\n"
+            f"Số dư của bạn: {users_data[sender_id]['balance']:,} VNĐ"
+        )
+        # Tùy chọn: thông báo cho người nhận (nếu bot có thể nhắn tin riêng cho họ)
+        try:
+            receiver_username = users_data[receiver_id].get('username', f"User_{receiver_id}")
+            await context.bot.send_message(
+                chat_id=receiver_id, 
+                text=f"Bạn vừa nhận được {amount:,} VNĐ từ {sender_username}.\nSố dư hiện tại của bạn: {users_data[receiver_id]['balance']:,} VNĐ"
+            )
+        except Exception as e:
+            logger.warning(f"Không thể gửi thông báo chuyển tiền đến người nhận {receiver_id}: {e}")
+
+    except ValueError:
+        await update.message.reply_text("ID người nhận hoặc số tiền không hợp lệ. Vui lòng nhập số.")
+
 
 # --- Main function để chạy bot ---
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Handlers cho người dùng (trong nhóm)
+    # Handlers cho người dùng (trong nhóm và riêng tư)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command)) # Thêm lệnh /help
-    application.add_handler(CommandHandler("check", check_balance)) # Đổi /balance thành /check
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("check", check_balance))
+    application.add_handler(CommandHandler("top", top_players)) # Triển khai /top
+    application.add_handler(CommandHandler("jackpot", view_jackpot)) # Triển khai /jackpot
+    application.add_handler(CommandHandler("taixiu", taixiu_info)) # Triển khai /taixiu
+    application.add_handler(CommandHandler("taixiumd5", taixiumd5_info)) # Triển khai /taixiumd5
+    application.add_handler(CommandHandler("chuyen", transfer_money)) # Triển khai /chuyen
+
+    # Handlers cho lệnh đặt cược (chỉ trong nhóm)
     application.add_handler(CommandHandler("tai", cmd_tai, filters=filters.ChatType.GROUPS))
     application.add_handler(CommandHandler("xiu", cmd_xiu, filters=filters.ChatType.GROUPS))
-    # Bỏ qua /top, /jackpot, /taixiu, /taixiumd5 vì chưa triển khai logic
 
-    # Handlers cho ADMIN (trong nhóm) - Dễ nhớ hơn
-    application.add_handler(CommandHandler("newgame", open_new_game, filters=filters.ChatType.GROUPS)) # Đổi /adminphienmoi thành /newgame
-    application.add_handler(CommandHandler("stop", admin_end_session_manual, filters=filters.ChatType.GROUPS)) # Đổi /adminendphien thành /stop
+    # Handlers cho ADMIN (trong nhóm)
+    application.add_handler(CommandHandler("newgame", open_new_game, filters=filters.ChatType.GROUPS))
+    application.add_handler(CommandHandler("stop", admin_end_session_manual, filters=filters.ChatType.GROUPS))
     
-    # Handlers cho ADMIN (trong chat riêng với bot) - Dễ nhớ hơn
-    application.add_handler(CommandHandler("setdice", admin_override_dice, filters=filters.ChatType.PRIVATE)) # Đổi /admintung thành /setdice
-    application.add_handler(CommandHandler("addmoney", admin_add_balance, filters=filters.ChatType.PRIVATE)) # Đổi /adminaddxu thành /addmoney
-    application.add_handler(CommandHandler("removemoney", admin_remove_balance, filters=filters.ChatType.PRIVATE)) # Đổi /adminrmvxu thành /removemoney
-    application.add_handler(CommandHandler("lastgame", admin_last_session_info, filters=filters.ChatType.PRIVATE)) # Đổi /adminlastsession thành /lastgame
-    application.add_handler(CommandHandler("setjackpot", admin_set_jackpot, filters=filters.ChatType.PRIVATE)) # Đổi /adminsetjackpot thành /setjackpot
+    # Handlers cho ADMIN (trong chat riêng với bot)
+    application.add_handler(CommandHandler("setdice", admin_override_dice, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("addmoney", admin_add_balance, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("removemoney", admin_remove_balance, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("lastgame", admin_last_session_info, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("setjackpot", admin_set_jackpot, filters=filters.ChatType.PRIVATE))
 
 
     # Chạy bot
