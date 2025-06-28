@@ -12,11 +12,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Cấu hình Bot ---
-TELEGRAM_BOT_TOKEN = "7757369765:AAGNKUk80xeBAPXXZRTXySjQ0DPZXjzsueU"  # <-- THAY THẾ BẰNG TOKEN BOT CỦA BẠN
-ADMIN_IDS = [6915752059]  # <-- THAY THẾ BẰNG ID TELEGRAM CỦA ADMIN, VÍ DỤ: [123456789]
+TELEGRAM_BOT_TOKEN = "7757369765:AAGNKUk80xeBAPXXZRTXySjQ0DPZXjzsueU"  # <-- TOKEN BOT CỦA BẠN
+ADMIN_IDS = [6915752059]  # <-- ID TELEGRAM CỦA ADMIN
 
 # --- Biến toàn cục (DỮ LIỆU NÀY SẼ MẤT KHI BOT KHỞI ĐỘNG LẠI!) ---
-users_data = {}  # {user_id: {'balance': 10000000, 'username': 'Nguyen Van A'}}
+users_data = {}  # {user_id: {'balance': 100000, 'username': 'Nguyen Van A'}}
 current_bets = {}  # {user_id: {'type': 'tai/xiu', 'amount': 10000, 'username': '...'}
 current_session_id = 1748324 # Bắt đầu từ 1748324 như trong ví dụ của bạn
 session_is_active = False # Trạng thái phiên, chỉ cho phép cược khi True
@@ -24,9 +24,9 @@ last_dice_roll_info = {} # Lưu thông tin kết quả phiên cuối cùng để
 active_group_chat_id = None # Lưu chat_id của nhóm đang chơi để admin có thể can thiệp từ chat riêng
 
 # --- Cấu hình Jackpot ---
-JACKPOT_AMOUNT = 200000000000000 # Giá trị Jackpot khởi tạo
-JACKPOT_MIN_RESET_VALUE = 10000000000000 # Giá trị Jackpot sau khi nổ
-JACKPOT_CONTRIBUTION_RATE = 0.005 # 0.5% của tổng tiền cược (hoặc tổng tiền thua, tùy bạn chọn) sẽ vào Jackpot
+JACKPOT_AMOUNT = 200000000000000000000000000000000000040013701100431380020 # Giá trị Jackpot khởi tạo
+JACKPOT_MIN_RESET_VALUE = 1000000000000000000000000000000000000000000000000000 # Giá trị Jackpot sau khi nổ
+JACKPOT_CONTRIBUTION_RATE = 0.005 # 0.5% của tổng tiền cược sẽ vào Jackpot
 
 # --- Hàm tiện ích ---
 def is_admin(user_id):
@@ -54,15 +54,13 @@ def generate_md5(session_id, random_string, dice_values):
 
 def get_current_pattern():
     """Tạo cầu hiện tại (ví dụ tĩnh, cần DB để làm động)."""
-    # Đây chỉ là ví dụ tĩnh. Trong thực tế, bạn cần lưu lịch sử kết quả của các phiên.
-    # Ví dụ: lấy 10 kết quả gần nhất, nếu là Tài -> ⚫️, Xỉu -> ⚪️
     return "⚫️⚫️⚪️⚪️⚪️⚪️⚫️⚫️⚫️⚫️" 
 
 # --- Lệnh Khởi động Bot ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if user.id not in users_data:
-        users_data[user.id] = {'balance': 10000000, 'username': user.first_name} # Khởi tạo 10 triệu VNĐ
+        users_data[user.id] = {'balance': 100000, 'username': user.first_name} # Số dư mặc định 100000
     
     await update.message.reply_html(
         rf"Chào mừng {user.mention_html()}! Tôi là bot cược Tài Xỉu. "
@@ -74,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if user_id not in users_data:
-        users_data[user_id] = {'balance': 10000000, 'username': update.effective_user.first_name}
+        users_data[user_id] = {'balance': 100000, 'username': update.effective_user.first_name} # Số dư mặc định 100000
     
     await update.message.reply_text(f"💰 Số dư hiện tại của bạn: {users_data[user_id]['balance']:,} VNĐ")
 
@@ -100,7 +98,7 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
     username = update.effective_user.first_name
 
     if user_id not in users_data:
-        users_data[user_id] = {'balance': 10000000, 'username': username} # Khởi tạo nếu chưa có
+        users_data[user_id] = {'balance': 100000, 'username': username} # Số dư mặc định 100000
     
     bet_amount_str = args[0]
     try:
@@ -181,7 +179,8 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     # Lấy chat_id để gửi tin nhắn, ưu tiên target_chat_id nếu được cung cấp
     chat_id = target_chat_id if target_chat_id else (context.job.chat_id if context.job else update.effective_chat.id)
     
-    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT # Khai báo global ở đây
+    # Khai báo global ở đầu hàm, trước bất kỳ lần truy cập nào đến biến này
+    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT 
     
     # Kiểm tra xem có phiên nào đang hoạt động không
     if not session_is_active and not dice_override: # Nếu không có phiên và không phải là lệnh can thiệp
@@ -201,7 +200,7 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     total_bet_amount = sum(bet['amount'] for bet in current_bets.values())
     total_win_amount = 0
     winners_list = []
-    jackpot_winner = None
+    jackpot_winner_info = None
     
     # Tích lũy Jackpot từ tổng cược
     JACKPOT_AMOUNT += int(total_bet_amount * JACKPOT_CONTRIBUTION_RATE)
@@ -219,13 +218,14 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     if dice_values == [6, 6, 6] or dice_values == [1, 1, 1]:
         # Chọn người thắng Jackpot: người cuối cùng đặt cược trong phiên
         if current_bets:
-            last_bettor_id = list(current_bets.keys())[-1]
-            jackpot_winner = users_data[last_bettor_id]['username']
+            # Lấy key (user_id) cuối cùng trong dictionary (python 3.7+ đảm bảo thứ tự chèn)
+            last_bettor_id = list(current_bets.keys())[-1] 
+            jackpot_winner_info = users_data[last_bettor_id]
             users_data[last_bettor_id]['balance'] += JACKPOT_AMOUNT # Cộng Jackpot vào số dư
-            jackpot_status = f"\n🎉 NỔ JACKPOT! 🎉\nNgười thắng Jackpot: {jackpot_winner}\nSố tiền Jackpot: {JACKPOT_AMOUNT:,} VNĐ"
+            jackpot_status = f"\n🎉 NỔ JACKPOT! 🎉\nNgười thắng Jackpot: {jackpot_winner_info['username']}\nSố tiền Jackpot: {JACKPOT_AMOUNT:,} VNĐ"
             JACKPOT_AMOUNT = JACKPOT_MIN_RESET_VALUE # Reset Jackpot sau khi nổ
         else:
-            jackpot_status = "\n⚠️ NỔ JACKPOT nhưng không có người đặt cược để nhận thưởng!"
+            jackpot_status = "\n⚠️ NỔ JACKPOT nhưng không có người đặt cược để nhận thưởng! Jackpot sẽ được reset."
             JACKPOT_AMOUNT = JACKPOT_MIN_RESET_VALUE # Vẫn reset Jackpot
 
     # Lưu thông tin phiên cuối cùng để admin bot riêng có thể truy cập
@@ -293,7 +293,7 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     args = context.args
     if len(args) < 4:
-        await update.message.reply_text("Cú pháp: /admintung [chat_id_nhóm] [số_1] [số_2] [số_3]\nVí dụ: /admintung -100123456789 6 4 1")
+        await update.message.reply_text("Cú pháp: /setdice [chat_id_nhóm] [số_1] [số_2] [số_3]\nVí dụ: /setdice -100123456789 6 4 1")
         return
     
     try:
@@ -321,7 +321,7 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Đã can thiệp kết quả phiên #{current_session_id} trong nhóm {target_chat_id} với xúc xắc: {', '.join(map(str, dice_values))}")
 
     except ValueError as e:
-        await update.message.reply_text(f"Lỗi: {e}\nCú pháp: /admintung [chat_id_nhóm] [số_1] [số_2] [số_3]")
+        await update.message.reply_text(f"Lỗi: {e}\nCú pháp: /setdice [chat_id_nhóm] [số_1] [số_2] [số_3]")
     except Exception as e:
         await update.message.reply_text(f"Có lỗi xảy ra: {e}")
 
@@ -356,7 +356,7 @@ async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     args = context.args
     if len(args) != 2:
-        await update.message.reply_text("Cú pháp: /adminaddxu [user_id] [số tiền]")
+        await update.message.reply_text("Cú pháp: /addmoney [user_id] [số tiền]")
         return
     try:
         target_user_id = int(args[0])
@@ -366,7 +366,7 @@ async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
 
         if target_user_id not in users_data:
-            users_data[target_user_id] = {'balance': 0, 'username': f"User_{target_user_id}"} 
+            users_data[target_user_id] = {'balance': 100000, 'username': f"User_{target_user_id}"} # Khởi tạo với 100000
         
         users_data[target_user_id]['balance'] += amount
         await update.message.reply_text(
@@ -384,7 +384,7 @@ async def admin_remove_balance(update: Update, context: ContextTypes.DEFAULT_TYP
 
     args = context.args
     if len(args) != 2:
-        await update.message.reply_text("Cú pháp: /adminrmvxu [user_id] [số tiền]")
+        await update.message.reply_text("Cú pháp: /removemoney [user_id] [số tiền]")
         return
     try:
         target_user_id = int(args[0])
@@ -417,7 +417,7 @@ async def admin_set_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     args = context.args
     if len(args) != 1:
-        await update.message.reply_text("Cú pháp: /adminsetjackpot [số tiền]\nVí dụ: /adminsetjackpot 1000000000000")
+        await update.message.reply_text("Cú pháp: /setjackpot [số tiền]\nVí dụ: /setjackpot 1000000000000")
         return
     try:
         new_jackpot_value = int(args[0])
@@ -442,16 +442,16 @@ def main() -> None:
     application.add_handler(CommandHandler("tai", cmd_tai, filters=filters.ChatType.GROUPS))
     application.add_handler(CommandHandler("xiu", cmd_xiu, filters=filters.ChatType.GROUPS))
 
-    # Handlers cho ADMIN (trong nhóm)
-    application.add_handler(CommandHandler("adminphienmoi", admin_start_session, filters=filters.ChatType.GROUPS))
-    application.add_handler(CommandHandler("adminendphien", admin_end_session_manual, filters=filters.ChatType.GROUPS))
+    # Handlers cho ADMIN (trong nhóm) - Dễ nhớ hơn
+    application.add_handler(CommandHandler("newgame", admin_start_session, filters=filters.ChatType.GROUPS))
+    application.add_handler(CommandHandler("endgame", admin_end_session_manual, filters=filters.ChatType.GROUPS))
     
-    # Handlers cho ADMIN (trong chat riêng với bot)
-    application.add_handler(CommandHandler("admintung", admin_override_dice, filters=filters.ChatType.PRIVATE))
-    application.add_handler(CommandHandler("adminaddxu", admin_add_balance, filters=filters.ChatType.PRIVATE))
-    application.add_handler(CommandHandler("adminrmvxu", admin_remove_balance, filters=filters.ChatType.PRIVATE))
-    application.add_handler(CommandHandler("adminlastsession", admin_last_session_info, filters=filters.ChatType.PRIVATE))
-    application.add_handler(CommandHandler("adminsetjackpot", admin_set_jackpot, filters=filters.ChatType.PRIVATE))
+    # Handlers cho ADMIN (trong chat riêng với bot) - Dễ nhớ hơn
+    application.add_handler(CommandHandler("setdice", admin_override_dice, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("addmoney", admin_add_balance, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("removemoney", admin_remove_balance, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("lastgame", admin_last_session_info, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("setjackpot", admin_set_jackpot, filters=filters.ChatType.PRIVATE))
 
 
     # Chạy bot
