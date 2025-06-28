@@ -538,6 +538,38 @@ async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except ValueError:
         await update.message.reply_text("ID người nhận hoặc số tiền không hợp lệ. Vui lòng nhập số.")
 
+# --- Lệnh /help (Người dùng) ---
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    help_text = """
+✨ ♦️ SUNWIN CASINO - HƯỚNG DẪN SỬ DỤNG ♦️ ✨
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎲 TÀI XỈU ONLINE - UY TÍN HÀNG ĐẦU 🎲
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 LỆNH CƠ BẢN:
+• /start - Bắt đầu tương tác với bot và xem hướng dẫn cơ bản
+• /help - Xem hướng dẫn chi tiết các lệnh
+• /check - Kiểm tra số dư hiện tại của bạn
+• /top - Bảng xếp hạng người chơi
+• /jackpot - Xem tiền hũ Jackpot hiện tại
+
+🎯 LỆNH CHƠI:
+• /taixiu - Chế độ thường (có JACKPOT)
+• /taixiumd5 - Chế độ MD5 minh bạch
+• /tai [số tiền/all] - Cược TÀI (11-18)
+• /xiu [số tiền/all] - Cược XỈU (3-10)
+
+🔧 LỆNH ADMIN:
+(Chỉ admin mới sử dụng được và một số lệnh chỉ dùng trong chat riêng với bot)
+• /newgame - Mở phiên mới (trong nhóm)
+• /stop - Dừng trò chơi (trong nhóm)
+• /addmoney [id] [số tiền] - Nạp tiền cho người dùng (chat riêng)
+• /removemoney [id] [số tiền] - Trừ tiền của người dùng (chat riêng)
+• /chuyen [id] [số tiền] - Chuyển tiền cho người dùng khác (chỉ người dùng, không phải admin)
+• /setdice [chat_id_nhóm] [s1] [s2] [s3] - Can thiệp kết quả xúc xắc (chat riêng)
+• /lastgame - Xem thông tin phiên cuối cùng (chat riêng)
+• /setjackpot [số tiền] - Đặt lại giá trị Jackpot (chat riêng)
+"""
+    await update.message.reply_text(help_text)
 
 # --- Main function để chạy bot ---
 def main() -> None:
@@ -545,8 +577,8 @@ def main() -> None:
 
     # Handlers cho người dùng (trong nhóm và riêng tư)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("check", check_balance))
+    application.add_handler(CommandHandler("help", help_command)) 
+    application.add_handler(CommandHandler("check", check_balance)) 
     application.add_handler(CommandHandler("top", top_players)) # Triển khai /top
     application.add_handler(CommandHandler("jackpot", view_jackpot)) # Triển khai /jackpot
     application.add_handler(CommandHandler("taixiu", taixiu_info)) # Triển khai /taixiu
@@ -578,4 +610,3 @@ if __name__ == "__main__":
         if admin_id not in users_data:
             users_data[admin_id] = {'balance': 999999999999999999, 'username': f"Admin_{admin_id}"} # Admin có nhiều tiền hơn
     main()
-
