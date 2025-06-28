@@ -4,6 +4,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, filters
 import random
 import hashlib
 import asyncio
+import os # Import os để sử dụng PORT
 
 # --- Cấu hình Logging ---
 logging.basicConfig(
@@ -82,7 +83,7 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
         await update.message.reply_text("Lệnh này chỉ có thể sử dụng trong nhóm chat.")
         return
 
-    global session_is_active
+    global session_is_active # Đảm bảo khai báo global
     if not session_is_active:
         await update.message.reply_text("Hiện không phải thời gian đặt cược. Vui lòng chờ phiên mới bắt đầu.")
         return
@@ -97,6 +98,7 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
     user_id = update.effective_user.id
     username = update.effective_user.first_name
 
+    global users_data, current_bets # Đảm bảo khai báo global
     if user_id not in users_data:
         users_data[user_id] = {'balance': 100000, 'username': username}  # Số dư mặc định 100000
     
@@ -147,7 +149,7 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Lệnh này chỉ dùng trong nhóm.")
         return
     
-    global session_is_active, current_session_id, current_bets, active_group_chat_id
+    global session_is_active, current_session_id, current_bets, active_group_chat_id, JACKPOT_AMOUNT # Đảm bảo khai báo global
     if session_is_active:
         await update.message.reply_text(f"Phiên #{current_session_id} đang hoạt động. Vui lòng kết thúc phiên trước bằng lệnh /stop.")
         return
@@ -177,7 +179,7 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 # --- Hàm kết thúc phiên và trả kết quả ---
 async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_override=None, target_chat_id=None) -> None:
     # Khai báo global ở đầu hàm, trước bất kỳ lần truy cập nào đến biến này
-    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT, current_session_id
+    global session_is_active, last_dice_roll_info, current_bets, JACKPOT_AMOUNT, current_session_id, users_data
     
     # Lấy chat_id để gửi tin nhắn, ưu tiên target_chat_id nếu được cung cấp
     chat_id = target_chat_id if target_chat_id else (context.job.chat_id if context.job else update.effective_chat.id)
@@ -306,7 +308,7 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not all(1 <= d <= 6 for d in dice_values):
             raise ValueError("Xúc xắc phải là số từ 1 đến 6.")
         
-        global session_is_active, current_session_id # Khai báo global
+        global session_is_active, current_session_id, active_group_chat_id # Khai báo global
         if not session_is_active or active_group_chat_id != target_chat_id:
             await update.message.reply_text(f"Hiện không có phiên nào đang hoạt động trong nhóm ID {target_chat_id} này.")
             return
@@ -334,6 +336,7 @@ async def admin_last_session_info(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Lệnh này chỉ dành cho Admin và chỉ sử dụng trong chat riêng với bot.")
         return
     
+    global last_dice_roll_info # Khai báo global
     if not last_dice_roll_info:
         await update.message.reply_text("Chưa có thông tin về phiên cuối cùng.")
         return
@@ -368,6 +371,7 @@ async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Số tiền phải lớn hơn 0.")
             return
 
+        global users_data # Khai báo global
         if target_user_id not in users_data:
             users_data[target_user_id] = {'balance': 100000, 'username': f"User_{target_user_id}"} # Khởi tạo với 100000
         
@@ -396,6 +400,7 @@ async def admin_remove_balance(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Số tiền phải lớn hơn 0.")
             return
 
+        global users_data # Khai báo global
         if target_user_id not in users_data:
             await update.message.reply_text(f"Không tìm thấy người dùng với ID: {target_user_id}.")
             return
@@ -428,7 +433,7 @@ async def admin_set_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Số tiền Jackpot không thể âm.")
             return
         
-        global JACKPOT_AMOUNT
+        global JACKPOT_AMOUNT # Khai báo global
         JACKPOT_AMOUNT = new_jackpot_value
         await update.message.reply_text(f"Jackpot đã được đặt thành: {JACKPOT_AMOUNT:,} VNĐ")
     except ValueError:
@@ -436,6 +441,7 @@ async def admin_set_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # --- Lệnh Người dùng: Bảng xếp hạng (/top) ---
 async def top_players(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global users_data # Khai báo global
     if not users_data:
         await update.message.reply_text("Chưa có dữ liệu người chơi để xếp hạng.")
         return
@@ -451,7 +457,7 @@ async def top_players(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 # --- Lệnh Người dùng: Xem Jackpot (/jackpot) ---
 async def view_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    global JACKPOT_AMOUNT
+    global JACKPOT_AMOUNT # Khai báo global
     await update.message.reply_text(f"💰 TIỀN HŨ JACKPOT HIỆN TẠI: {JACKPOT_AMOUNT:,} VNĐ")
 
 # --- Lệnh Người dùng: Chế độ thường (/taixiu) ---
@@ -491,6 +497,7 @@ async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     sender_id = update.effective_user.id
     sender_username = update.effective_user.first_name
 
+    global users_data # Khai báo global
     if sender_id not in users_data:
         users_data[sender_id] = {'balance': 100000, 'username': sender_username}
 
@@ -573,17 +580,24 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # --- Main function để chạy bot ---
 def main() -> None:
+    # Render sẽ cung cấp một biến môi trường PORT. Nếu không có, dùng 8080.
+    # Tuy nhiên, đối với Telegram bot (polling), chúng ta không cần lắng nghe cổng.
+    # Lỗi "Port scan timeout" là do Render cố gắng phát hiện một web server,
+    # nhưng bot của chúng ta không phải là web server.
+    # Cách khắc phục là thay đổi "Type" của dịch vụ trên Render.
+    # Chúng ta sẽ dùng run_polling và không cần bind_address/port.
+
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Handlers cho người dùng (trong nhóm và riêng tư)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command)) 
     application.add_handler(CommandHandler("check", check_balance)) 
-    application.add_handler(CommandHandler("top", top_players)) # Triển khai /top
-    application.add_handler(CommandHandler("jackpot", view_jackpot)) # Triển khai /jackpot
-    application.add_handler(CommandHandler("taixiu", taixiu_info)) # Triển khai /taixiu
-    application.add_handler(CommandHandler("taixiumd5", taixiumd5_info)) # Triển khai /taixiumd5
-    application.add_handler(CommandHandler("chuyen", transfer_money)) # Triển khai /chuyen
+    application.add_handler(CommandHandler("top", top_players)) 
+    application.add_handler(CommandHandler("jackpot", view_jackpot)) 
+    application.add_handler(CommandHandler("taixiu", taixiu_info)) 
+    application.add_handler(CommandHandler("taixiumd5", taixiumd5_info)) 
+    application.add_handler(CommandHandler("chuyen", transfer_money)) 
 
     # Handlers cho lệnh đặt cược (chỉ trong nhóm)
     application.add_handler(CommandHandler("tai", cmd_tai, filters=filters.ChatType.GROUPS))
@@ -602,7 +616,24 @@ def main() -> None:
 
 
     # Chạy bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Đối với bot polling, chúng ta không cần lắng nghe cổng cụ thể
+    # Nếu Render vẫn yêu cầu một cổng, hãy sử dụng os.environ.get('PORT')
+    # và cấu hình lại loại dịch vụ trên Render thành "Background Worker" thay vì "Web Service"
+    PORT = int(os.environ.get('PORT', '8080')) # Render sẽ tự động gán PORT
+
+    # Nếu vẫn gặp lỗi "Port scan timeout", bạn cần CHUYỂN LOẠI DỊCH VỤ trên Render.
+    # Dịch vụ bot Telegram thường là "Background Worker" chứ không phải "Web Service".
+    # Một số nhà cung cấp hosting yêu cầu bind vào 0.0.0.0 hoặc lắng nghe cổng
+    # ngay cả với bot polling. Tuy nhiên, python-telegram-bot's run_polling()
+    # không cần điều đó. Lỗi này chủ yếu do Render hiểu nhầm loại dịch vụ.
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except Exception as e:
+        logger.error(f"Error running bot: {e}")
+        # Đây là nơi bạn có thể thêm logic để kiểm tra lỗi Conflict
+        # Nếu là Conflict, có thể do bot đang chạy ở nơi khác hoặc nhiều instance.
+        # Render sẽ tự động khởi động lại nếu dịch vụ bị crash.
+
 
 if __name__ == "__main__":
     # Khởi tạo một số dữ liệu ban đầu cho admin để test
@@ -610,3 +641,4 @@ if __name__ == "__main__":
         if admin_id not in users_data:
             users_data[admin_id] = {'balance': 999999999999999999, 'username': f"Admin_{admin_id}"} # Admin có nhiều tiền hơn
     main()
+
