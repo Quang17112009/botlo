@@ -3,10 +3,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 import random
 import hashlib
-import asyncio
+import asyncio # Để dùng asyncio.sleep nếu cần, nhưng job_queue sẽ thay thế
 import os 
 
-# Import database utilities (Đảm bảo bạn đã có file database.py và cài đặt SQLAlchemy)
+# Import database utilities
 from database import get_session, User, GameState, get_or_create_user, get_game_state, update_game_state
 
 # --- Cấu hình Logging ---
@@ -16,15 +16,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Cấu hình Bot ---
-TELEGRAM_BOT_TOKEN = "7757369765:AAGNKUk80xeBAPXXZRTXySjQ0DPZXjzsueU"  # TOKEN BOT CỦA BẠN
-ADMIN_IDS = [6915752059]  # ID TELEGRAM CỦA ADMIN
+# LẤY TOKEN TỪ BIẾN MÔI TRƯỜNG HOẶC ĐẶT TRỰC TIẾP
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "7757369765:AAGNKUk80xeBAPXXZRTXySjQ0DPZXjzsueU") 
+ADMIN_IDS = [6915752059]  # ID TELEGRAM CỦA ADMIN (Có thể thêm nhiều ID)
 
-# --- Biến toàn cục (Với DB, các biến này chỉ còn lưu trạng thái tạm thời) ---
+# --- Biến toàn cục (Chỉ lưu trạng thái tạm thời trong bộ nhớ cho phiên hiện tại) ---
 current_bets = {}  # {user_id: {'type': 'tai/xiu', 'amount': 10000, 'username': '...'}
 last_dice_roll_info = {}  # Lưu thông tin kết quả phiên cuối cùng để admin xem
 
 # --- Cấu hình Jackpot ---
-JACKPOT_MIN_RESET_VALUE = 1000000000000000000000000000000000000000000000000000  # Giá trị Jackpot sau khi nổ
+# Đặt giá trị Jackpot khởi điểm hợp lý hơn một chút
+JACKPOT_MIN_RESET_VALUE = 50000000000000000000000000000000000000000000000000 # 50 TRIỆU ĐỒNG (ví dụ)
 JACKPOT_CONTRIBUTION_RATE = 0.005  # 0.5% của tổng tiền cược sẽ vào Jackpot
 
 # --- Hàm tiện ích ---
@@ -44,7 +46,7 @@ def calculate_result(dice_roll):
     elif 11 <= total <= 18:
         return "TÀI", total
     else:
-        return "LỖI", total # Trường hợp không mong muốn
+        return "LỖI", total # Trường hợp không mong muốn (tổng ngoài 3-18)
 
 def generate_md5(session_id, random_string, dice_values):
     """Tạo MD5 minh bạch từ chuỗi xác minh."""
@@ -52,14 +54,14 @@ def generate_md5(session_id, random_string, dice_values):
     return hashlib.md5(combined_string.encode('utf-8')).hexdigest()
 
 def get_current_pattern():
-    """Tạo cầu hiện tại (ví dụ tĩnh, cần DB để làm động)."""
+    """Tạo cầu hiện tại (ví dụ tĩnh). Để làm động, cần lưu lịch sử các phiên vào DB."""
     return "⚫️⚫️⚪️⚪️⚪️⚪️⚫️⚫️⚫️⚫️" 
 
 # --- Lệnh Khởi động Bot ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     # Lấy hoặc tạo user từ DB
-    user_db = get_or_create_user(user.id, user.first_name)
+    user_db = get_or_create_user(user.id, user.first_name) # Đảm bảo người dùng có trong DB
     
     await update.message.reply_html(
         rf"Chào mừng {user.mention_html()}! Tôi là bot cược Tài Xỉu. "
@@ -81,7 +83,7 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
         await update.message.reply_text("Lệnh này chỉ có thể sử dụng trong nhóm chat.")
         return
 
-    game_state = get_game_state()
+    game_state = get_game_state() # Lấy trạng thái game hiện tại từ DB
     if not bool(game_state.session_is_active): # Convert từ int (DB) sang bool
         await update.message.reply_text("Hiện không phải thời gian đặt cược. Vui lòng chờ phiên mới bắt đầu.")
         return
@@ -96,20 +98,17 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
     user_id = update.effective_user.id
     username = update.effective_user.first_name
 
-    session = get_session()
-    user_db = session.query(User).filter_by(id=user_id).first()
-    if not user_db:
-        # Nếu user chưa có trong DB, tạo mới.
-        # Lý tưởng là get_or_create_user đã được gọi ở start hoặc check, nhưng phòng trường hợp.
-        user_db = get_or_create_user(user_id, username)
-        # Vì get_or_create_user tạo session riêng và commit, ta cần fetch lại trong session hiện tại nếu muốn dùng.
-        # Hoặc đơn giản là thêm vào session hiện tại và commit sau.
-        session.add(user_db) 
-        session.commit() # Commit user mới trước khi tiếp tục
-        user_db = session.query(User).filter_by(id=user_id).first() # Fetch lại user trong session này
-
-    bet_amount_str = args[0]
+    session = get_session() # Mở một session mới cho thao tác DB này
     try:
+        user_db = session.query(User).filter_by(id=user_id).first()
+        if not user_db:
+            # Điều này không nên xảy ra thường xuyên nếu get_or_create_user được gọi sớm
+            user_db = User(id=user_id, username=username)
+            session.add(user_db)
+            session.commit() # Commit người dùng mới nếu chưa có
+            user_db = session.query(User).filter_by(id=user_id).first() # Lấy lại người dùng trong session hiện tại
+        
+        bet_amount_str = args[0]
         if bet_amount_str.lower() == 'all':
             bet_amount = user_db.balance
         else:
@@ -117,12 +116,10 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
         
         if bet_amount <= 0:
             await update.message.reply_text("Số tiền cược phải lớn hơn 0.")
-            session.close()
             return
 
         if bet_amount > user_db.balance:
             await update.message.reply_text(f"Bạn không đủ số dư. Số dư hiện tại: {user_db.balance:,} VNĐ")
-            session.close()
             return
         
         # Lưu cược của người dùng cho phiên hiện tại vào biến toàn cục (không phải DB)
@@ -141,6 +138,9 @@ async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE, bet_type
 
     except ValueError:
         await update.message.reply_text("Số tiền không hợp lệ. Vui lòng nhập số hoặc 'all'.")
+    except Exception as e:
+        logger.error(f"Lỗi khi đặt cược: {e}")
+        await update.message.reply_text("Đã xảy ra lỗi khi đặt cược. Vui lòng thử lại.")
     finally:
         session.close() # Đảm bảo session luôn được đóng
 
@@ -171,7 +171,7 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Lệnh này chỉ dùng trong nhóm.")
         return
     
-    game_state = get_game_state()
+    game_state = get_game_state() # Lấy trạng thái game hiện tại từ DB
     if bool(game_state.session_is_active): # Convert từ int (DB) sang bool
         await update.message.reply_text(f"Phiên #{game_state.current_session_id} đang hoạt động. Vui lòng kết thúc phiên trước bằng lệnh /stop.")
         return
@@ -181,8 +181,8 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     game_state.active_group_chat_id = update.effective_chat.id
     update_game_state(game_state) # Lưu trạng thái mới vào DB
 
-    global current_bets # Vẫn cần để reset cược trong bộ nhớ cho phiên mới
-    current_bets = {}
+    global current_bets # Phải khai báo global khi gán lại giá trị
+    current_bets = {} # Reset cược trong bộ nhớ cho phiên mới
 
     await update.message.reply_html(
         f"🎰 PHIÊN #{game_state.current_session_id} BẮT ĐẦU 🎰\n"
@@ -213,12 +213,15 @@ async def open_new_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # --- Hàm kết thúc phiên và trả kết quả ---
 async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_override=None, target_chat_id=None) -> None:
-    # Lấy trạng thái game từ DB
+    # KHẮC PHỤC LỖI: Cần khai báo global khi gán lại current_bets
+    global current_bets 
+    global last_dice_roll_info
+
     game_state = get_game_state() # Lấy trạng thái game mới nhất từ DB
     
     chat_id = target_chat_id if target_chat_id else (context.job.chat_id if context.job else update.effective_chat.id)
     
-    # Kiểm tra xem có phiên nào đang hoạt động không
+    # Kiểm tra xem có phiên nào đang hoạt động không (chỉ khi không phải admin override)
     if not bool(game_state.session_is_active) and not dice_override: 
         if update and update.effective_chat.type != "private": 
             await update.message.reply_text("Không có phiên nào đang hoạt động để kết thúc.")
@@ -229,6 +232,11 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
         job.schedule_removal()
     for job in context.job_queue.get_jobs_by_name(f"countdown_3s_{game_state.current_session_id}"):
         job.schedule_removal()
+    
+    # Hủy job kết thúc phiên tự động nếu có (để tránh chạy nhiều lần)
+    for job in context.job_queue.get_jobs_by_name(f"end_session_{game_state.current_session_id}"):
+        job.schedule_removal()
+
 
     # Cập nhật trạng thái phiên trong DB
     game_state.session_is_active = 0 # False (lưu int vào DB)
@@ -244,7 +252,6 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     total_bet_amount = sum(bet['amount'] for bet in current_bets.values())
     total_win_amount = 0
     winners_list = []
-    jackpot_winner_info = None
     
     # Mở session DB để cập nhật Jackpot và balance user
     session = get_session()
@@ -255,23 +262,27 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     # Xử lý thắng thua
     for user_id, bet_info in current_bets.items():
         user_db = session.query(User).filter_by(id=user_id).first() # Lấy user từ DB
-        if user_db and bet_info['type'].upper() == result_type:
-            win_amount = bet_info['amount'] * 2 # Thắng gấp đôi tiền cược
-            user_db.balance += win_amount
-            total_win_amount += bet_info['amount'] # Tổng tiền cược thắng (phần gốc)
-            winners_list.append(f"🏆 {bet_info['username']}: +{bet_info['amount']:,} VNĐ")
-    
+        if user_db: # Đảm bảo user tồn tại
+            if bet_info['type'].upper() == result_type:
+                win_amount = bet_info['amount'] * 2 # Thắng gấp đôi tiền cược
+                user_db.balance += win_amount
+                total_win_amount += bet_info['amount'] # Tổng tiền cược thắng (phần gốc)
+                winners_list.append(f"🏆 {bet_info['username']}: +{bet_info['amount']:,} VNĐ")
+            # else: # Người thua đã bị trừ tiền khi đặt cược, không cần làm gì thêm ở đây
+            #     user_db.balance -= bet_info['amount'] # Đã bị trừ khi đặt cược
+
     # Hiển thị Jackpot khi nổ (ví dụ 3 con 6 hoặc 3 con 1)
     jackpot_status = ""
     if dice_values == [6, 6, 6] or dice_values == [1, 1, 1]:
         if current_bets:
+            # Chọn người cuối cùng đặt cược trong phiên (Giả định dict giữ thứ tự)
             last_bettor_id = list(current_bets.keys())[-1] 
             jackpot_winner_db = session.query(User).filter_by(id=last_bettor_id).first()
             if jackpot_winner_db:
                 jackpot_winner_db.balance += game_state.jackpot_amount # Cộng Jackpot vào số dư
                 jackpot_status = f"\n🎉 NỔ JACKPOT! 🎉\nNgười thắng Jackpot: {jackpot_winner_db.username}\nSố tiền Jackpot: {game_state.jackpot_amount:,} VNĐ"
                 game_state.jackpot_amount = JACKPOT_MIN_RESET_VALUE # Reset Jackpot sau khi nổ
-            else: # Điều này không nên xảy ra nếu user được tạo khi đặt cược
+            else: 
                 jackpot_status = "\n⚠️ NỔ JACKPOT nhưng không tìm thấy thông tin người đặt cược để nhận thưởng! Jackpot sẽ được reset."
                 game_state.jackpot_amount = JACKPOT_MIN_RESET_VALUE # Vẫn reset Jackpot
         else:
@@ -286,7 +297,6 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     update_game_state(game_state) # Lưu GameState cuối cùng vào DB
 
     # Lưu thông tin phiên cuối cùng để admin bot riêng có thể truy cập
-    global last_dice_roll_info
     last_dice_roll_info = {
         'dice': dice_values,
         'result_type': result_type,
@@ -317,14 +327,12 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE, dice_o
     await context.bot.send_message(chat_id=chat_id, text=message_text)
 
     # Sau khi kết thúc, clear cược cho phiên tiếp theo
-    global current_bets
-    current_bets = {}
+    current_bets = {} 
 
 # Hàm được gọi tự động bởi job_queue
 async def auto_end_session(context: ContextTypes.DEFAULT_TYPE):
-    game_state = get_game_state()
-    # Dừng job hiện tại để tránh chạy lại
-    # Đảm bảo current_session_id được cập nhật trước khi hủy job
+    game_state = get_game_state() # Lấy trạng thái game hiện tại
+    # Hủy job hiện tại để tránh chạy lại (nếu có trường hợp bị trigger nhiều lần)
     for job in context.job_queue.get_jobs_by_name(f"end_session_{game_state.current_session_id}"):
         job.schedule_removal()
     
@@ -341,8 +349,16 @@ async def admin_end_session_manual(update: Update, context: ContextTypes.DEFAULT
         return
     
     game_state = get_game_state()
-    # Hủy job tự động kết thúc nếu có
+    if not bool(game_state.session_is_active):
+        await update.message.reply_text("Không có phiên nào đang hoạt động để kết thúc.")
+        return
+
+    # Hủy job tự động kết thúc và các job đếm ngược nếu có
     for job in context.job_queue.get_jobs_by_name(f"end_session_{game_state.current_session_id}"):
+        job.schedule_removal()
+    for job in context.job_queue.get_jobs_by_name(f"countdown_10s_{game_state.current_session_id}"):
+        job.schedule_removal()
+    for job in context.job_queue.get_jobs_by_name(f"countdown_3s_{game_state.current_session_id}"):
         job.schedule_removal()
 
     await end_session(update, context, target_chat_id=update.effective_chat.id)
@@ -370,18 +386,16 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text(f"Hiện không có phiên nào đang hoạt động trong nhóm ID {target_chat_id} này.")
             return
 
-        # Hủy job tự động kết thúc nếu có
+        # Hủy job tự động kết thúc và các job đếm ngược nếu có
         for job in context.job_queue.get_jobs_by_name(f"end_session_{game_state.current_session_id}"):
             job.schedule_removal()
-        
-        # Hủy các job đếm ngược
         for job in context.job_queue.get_jobs_by_name(f"countdown_10s_{game_state.current_session_id}"):
             job.schedule_removal()
         for job in context.job_queue.get_jobs_by_name(f"countdown_3s_{game_state.current_session_id}"):
             job.schedule_removal()
 
         dummy_context = ContextTypes.DEFAULT_TYPE(bot=context.bot, args=context.args, chat_data=context.chat_data, user_data=context.user_data)
-        # Giả lập job cho end_session biết chat_id
+        # Giả lập job cho end_session biết chat_id (cần thiết cho end_session khi update = None)
         dummy_context.job = type('Job', (object,), {'chat_id': target_chat_id, 'name': 'admin_manual_end_session'})()
         
         await end_session(None, dummy_context, dice_override=dice_values, target_chat_id=target_chat_id)
@@ -390,6 +404,7 @@ async def admin_override_dice(update: Update, context: ContextTypes.DEFAULT_TYPE
     except ValueError as e:
         await update.message.reply_text(f"Lỗi: {e}\nCú pháp: /setdice [chat_id_nhóm] [số_1] [số_2] [số_3]")
     except Exception as e:
+        logger.error(f"Có lỗi xảy ra khi can thiệp xúc xắc: {e}", exc_info=True)
         await update.message.reply_text(f"Có lỗi xảy ra: {e}")
 
 # --- Lệnh ADMIN (TRÊN BOT RIÊNG): Xem thông tin phiên cuối cùng ---
@@ -398,21 +413,21 @@ async def admin_last_session_info(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Lệnh này chỉ dành cho Admin và chỉ sử dụng trong chat riêng với bot.")
         return
     
-    global last_dice_roll_info # Khai báo global
+    # last_dice_roll_info là global nên không cần khai báo global ở đây nếu chỉ đọc
     if not last_dice_roll_info:
         await update.message.reply_text("Chưa có thông tin về phiên cuối cùng.")
         return
 
     info = last_dice_roll_info
     message_text = (
-        f"--- THÔNG TIN PHIÊN CUỐI CÙNG #{info['session_id']} ---\n"
-        f"🎲 Xúc xắc: {', '.join(map(str, info['dice']))} = {info['total']}\n"
-        f"🔮 Kết quả: 🎲 {info['result_type']}\n"
-        f"🔐 MD5: {info['md5']}\n"
-        f"🔎 Mã xác minh: {info['verification_code']}\n"
-        f"📊 Tổng cược: {info['total_bet_amount']:,} VNĐ\n"
-        f"💰 Tổng thưởng: {info['total_win_amount']:,} VNĐ\n"
-        f"🎉 Người thắng:\n" + ("\n".join(info['winners_list']) if info['winners_list'] else "Không có người thắng trong phiên này.") + info['jackpot_status']
+        f"--- THÔNG TIN PHIÊN CUỐI CÙNG #{info.get('session_id', 'N/A')} ---\n"
+        f"🎲 Xúc xắc: {', '.join(map(str, info.get('dice', ['N/A', 'N/A', 'N/A'])))} = {info.get('total', 'N/A')}\n"
+        f"🔮 Kết quả: 🎲 {info.get('result_type', 'N/A')}\n"
+        f"🔐 MD5: {info.get('md5', 'N/A')}\n"
+        f"🔎 Mã xác minh: {info.get('verification_code', 'N/A')}\n"
+        f"📊 Tổng cược: {info.get('total_bet_amount', 0):,} VNĐ\n"
+        f"💰 Tổng thưởng: {info.get('total_win_amount', 0):,} VNĐ\n"
+        f"🎉 Người thắng:\n" + ("\n".join(info.get('winners_list', [])) if info.get('winners_list') else "Không có người thắng trong phiên này.") + info.get('jackpot_status', '')
     )
     await update.message.reply_text(message_text)
 
@@ -426,6 +441,7 @@ async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if len(args) != 2:
         await update.message.reply_text("Cú pháp: /addmoney [user_id] [số tiền]")
         return
+    session = get_session()
     try:
         target_user_id = int(args[0])
         amount = int(args[1])
@@ -433,25 +449,25 @@ async def admin_add_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Số tiền phải lớn hơn 0.")
             return
 
-        session = get_session()
         user_db = session.query(User).filter_by(id=target_user_id).first()
         if not user_db:
             # Tạo user nếu chưa có, với username mặc định
             user_db = User(id=target_user_id, username=f"User_{target_user_id}") 
             session.add(user_db)
-            session.commit()
-            user_db = session.query(User).filter_by(id=target_user_id).first() # Lấy lại để cập nhật
+            session.commit() # Commit user mới trước khi cập nhật
+            user_db = session.query(User).filter_by(id=target_user_id).first() # Lấy lại user trong session này
         
         user_db.balance += amount
         session.commit()
-        session.close()
-
         await update.message.reply_text(
             f"Đã cộng {amount:,} VNĐ vào tài khoản người dùng ID: {target_user_id}.\n"
             f"Số dư hiện tại của họ: {user_db.balance:,} VNĐ"
         )
     except ValueError:
         await update.message.reply_text("ID người dùng hoặc số tiền không hợp lệ.")
+    except Exception as e:
+        logger.error(f"Lỗi khi cộng tiền: {e}", exc_info=True)
+        await update.message.reply_text("Đã xảy ra lỗi khi cộng tiền.")
     finally:
         session.close()
 
@@ -465,6 +481,7 @@ async def admin_remove_balance(update: Update, context: ContextTypes.DEFAULT_TYP
     if len(args) != 2:
         await update.message.reply_text("Cú pháp: /removemoney [user_id] [số tiền]")
         return
+    session = get_session()
     try:
         target_user_id = int(args[0])
         amount = int(args[1])
@@ -472,21 +489,17 @@ async def admin_remove_balance(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Số tiền phải lớn hơn 0.")
             return
 
-        session = get_session()
         user_db = session.query(User).filter_by(id=target_user_id).first()
         if not user_db:
             await update.message.reply_text(f"Không tìm thấy người dùng với ID: {target_user_id}.")
-            session.close()
             return
 
         if user_db.balance < amount:
             await update.message.reply_text(f"Người dùng ID {target_user_id} không đủ số dư để trừ (còn {user_db.balance:,} VNĐ).")
-            session.close()
             return
 
         user_db.balance -= amount
         session.commit()
-        session.close()
         
         await update.message.reply_text(
             f"Đã trừ {amount:,} VNĐ khỏi tài khoản người dùng ID: {target_user_id}.\n"
@@ -494,6 +507,9 @@ async def admin_remove_balance(update: Update, context: ContextTypes.DEFAULT_TYP
         )
     except ValueError:
         await update.message.reply_text("ID người dùng hoặc số tiền không hợp lệ.")
+    except Exception as e:
+        logger.error(f"Lỗi khi trừ tiền: {e}", exc_info=True)
+        await update.message.reply_text("Đã xảy ra lỗi khi trừ tiền.")
     finally:
         session.close()
 
@@ -513,34 +529,42 @@ async def admin_set_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("Số tiền Jackpot không thể âm.")
             return
         
-        game_state = get_game_state()
+        game_state = get_game_state() # Lấy trạng thái game hiện tại từ DB
         game_state.jackpot_amount = new_jackpot_value
-        update_game_state(game_state)
+        update_game_state(game_state) # Lưu trạng thái mới vào DB
 
         await update.message.reply_text(f"Jackpot đã được đặt thành: {game_state.jackpot_amount:,} VNĐ")
     except ValueError:
         await update.message.reply_text("Số tiền Jackpot không hợp lệ.")
+    except Exception as e:
+        logger.error(f"Lỗi khi đặt Jackpot: {e}", exc_info=True)
+        await update.message.reply_text("Đã xảy ra lỗi khi đặt Jackpot.")
 
 # --- Lệnh Người dùng: Bảng xếp hạng (/top) ---
 async def top_players(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session = get_session()
-    # Sắp xếp người chơi theo số dư giảm dần
-    sorted_users = session.query(User).order_by(User.balance.desc()).limit(5).all()
-    session.close()
-    
-    if not sorted_users:
-        await update.message.reply_text("Chưa có dữ liệu người chơi để xếp hạng.")
-        return
-    
-    top_message = "🏆 BẢNG XẾP HẠNG NGƯỜI CHƠI 🏆\n━━━━━━━━━━━━━━━━\n"
-    for i, user_db in enumerate(sorted_users):
-        top_message += f"{i+1}. {user_db.username}: {user_db.balance:,} VNĐ\n"
-    
-    await update.message.reply_text(top_message)
+    try:
+        # Sắp xếp người chơi theo số dư giảm dần
+        sorted_users = session.query(User).order_by(User.balance.desc()).limit(5).all()
+        
+        if not sorted_users:
+            await update.message.reply_text("Chưa có dữ liệu người chơi để xếp hạng.")
+            return
+        
+        top_message = "🏆 BẢNG XẾP HẠNG NGƯỜI CHƠI 🏆\n━━━━━━━━━━━━━━━━\n"
+        for i, user_db in enumerate(sorted_users):
+            top_message += f"{i+1}. {user_db.username}: {user_db.balance:,} VNĐ\n"
+        
+        await update.message.reply_text(top_message)
+    except Exception as e:
+        logger.error(f"Lỗi khi lấy top người chơi: {e}", exc_info=True)
+        await update.message.reply_text("Đã xảy ra lỗi khi lấy bảng xếp hạng.")
+    finally:
+        session.close() # Đảm bảo session luôn được đóng
 
 # --- Lệnh Người dùng: Xem Jackpot (/jackpot) ---
 async def view_jackpot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    game_state = get_game_state()
+    game_state = get_game_state() # Lấy trạng thái game hiện tại từ DB
     await update.message.reply_text(f"💰 TIỀN HŨ JACKPOT HIỆN TẠI: {game_state.jackpot_amount:,} VNĐ")
 
 # --- Lệnh Người dùng: Chế độ thường (/taixiu) ---
@@ -581,44 +605,42 @@ async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     sender_username = update.effective_user.first_name
 
     session = get_session()
-    sender_user_db = session.query(User).filter_by(id=sender_id).first()
-    if not sender_user_db:
-        sender_user_db = get_or_create_user(sender_id, sender_username)
-        session.add(sender_user_db) # Re-add for this session
-        session.commit() # Commit new user
-        sender_user_db = session.query(User).filter_by(id=sender_id).first() # Fetch again
-
     try:
+        sender_user_db = session.query(User).filter_by(id=sender_id).first()
+        if not sender_user_db:
+            sender_user_db = get_or_create_user(sender_id, sender_username) # Đảm bảo người gửi có trong DB
+            # Lưu ý: get_or_create_user đã đóng session riêng của nó, nên nếu bạn muốn dùng sender_user_db trong session hiện tại,
+            # bạn có thể cần thêm nó vào session hoặc fetch lại. Ở đây, tạm thời ta sẽ dùng instance cũ.
+            session.add(sender_user_db) # Thêm vào session hiện tại nếu nó mới được tạo
+            session.commit() # Commit để đảm bảo user có trong DB trước khi truy vấn lại nếu cần
+            sender_user_db = session.query(User).filter_by(id=sender_id).first() # Lấy lại trong session hiện tại
+            
         receiver_id = int(args[0])
         amount = int(args[1])
 
         if amount <= 0:
             await update.message.reply_text("Số tiền chuyển phải lớn hơn 0.")
-            session.close()
             return
 
         if sender_id == receiver_id:
             await update.message.reply_text("Bạn không thể tự chuyển tiền cho chính mình.")
-            session.close()
             return
 
         if sender_user_db.balance < amount:
             await update.message.reply_text(f"Bạn không đủ số dư để chuyển. Số dư hiện tại: {sender_user_db.balance:,} VNĐ")
-            session.close()
             return
         
         receiver_user_db = session.query(User).filter_by(id=receiver_id).first()
         if not receiver_user_db:
             receiver_user_db = User(id=receiver_id, username=f"User_{receiver_id}")
             session.add(receiver_user_db)
-            session.commit() # Commit new receiver user
-            receiver_user_db = session.query(User).filter_by(id=receiver_id).first() # Fetch again
+            session.commit() # Commit người nhận mới
+            receiver_user_db = session.query(User).filter_by(id=receiver_id).first() # Lấy lại trong session hiện tại
         
         sender_user_db.balance -= amount
         receiver_user_db.balance += amount
         session.commit() # Lưu thay đổi
-        session.close()
-
+        
         await update.message.reply_text(
             f"✅ GIAO DỊCH THÀNH CÔNG ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -628,6 +650,7 @@ async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"Số dư của bạn: {sender_user_db.balance:,} VNĐ"
         )
         try:
+            # Cố gắng gửi thông báo đến người nhận
             receiver_username = receiver_user_db.username if receiver_user_db.username else f"User_{receiver_id}"
             await context.bot.send_message(
                 chat_id=receiver_id, 
@@ -638,6 +661,9 @@ async def transfer_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     except ValueError:
         await update.message.reply_text("ID người nhận hoặc số tiền không hợp lệ. Vui lòng nhập số.")
+    except Exception as e:
+        logger.error(f"Lỗi khi chuyển tiền: {e}", exc_info=True)
+        await update.message.reply_text("Đã xảy ra lỗi khi chuyển tiền.")
     finally:
         session.close()
 
@@ -667,7 +693,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 • /stop - Dừng trò chơi (trong nhóm)
 • /addmoney [id] [số tiền] - Nạp tiền cho người dùng (chat riêng)
 • /removemoney [id] [số tiền] - Trừ tiền của người dùng (chat riêng)
-• /chuyen [id] [số tiền] - Chuyển tiền cho người dùng khác (chỉ người dùng, không phải admin)
 • /setdice [chat_id_nhóm] [s1] [s2] [s3] - Can thiệp kết quả xúc xắc (chat riêng)
 • /lastgame - Xem thông tin phiên cuối cùng (chat riêng)
 • /setjackpot [số tiền] - Đặt lại giá trị Jackpot (chat riêng)
@@ -678,17 +703,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # Khởi tạo một số dữ liệu ban đầu cho admin để test, đảm bảo có trong DB
+    # Đảm bảo các admin có trong DB khi bot khởi chạy lần đầu
     for admin_id in ADMIN_IDS:
         session = get_session()
         admin_user = session.query(User).filter_by(id=admin_id).first()
         if not admin_user:
-            admin_user = User(id=admin_id, username=f"Admin_{admin_id}", balance=999999999999999999) # Admin có nhiều tiền hơn
+            admin_user = User(id=admin_id, username=f"Admin_{admin_id}", balance=999999999999999999) # Admin có số dư lớn
             session.add(admin_user)
             session.commit()
         session.close()
     
-    # Khởi tạo GameState ban đầu nếu chưa có
+    # Khởi tạo GameState ban đầu nếu chưa có (đảm bảo có 1 record)
     get_game_state()
 
     # Handlers cho người dùng (trong nhóm và riêng tư)
@@ -717,9 +742,10 @@ def main() -> None:
     application.add_handler(CommandHandler("setjackpot", admin_set_jackpot, filters=filters.ChatType.PRIVATE))
 
     try:
+        logger.info("Bot đang khởi động...")
         application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
     except Exception as e:
-        logger.error(f"Error running bot: {e}")
+        logger.error(f"Lỗi khi chạy bot: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
