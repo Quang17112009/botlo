@@ -1259,7 +1259,7 @@ def load_session_from_file():
     global current_session
     try:
         with open("phien.txt", "r") as file:
-            current_session = int(file.read())
+            current_session = int(file.read().strip())
     except FileNotFoundError:
         current_session = 1
 
