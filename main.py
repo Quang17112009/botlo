@@ -14,28 +14,31 @@ from threading import Timer
 import json
 import re
 import traceback
-import schedule
+import schedule # Đảm bảo đã cài đặt: pip install schedule
 from telebot.apihelper import ApiException
 from collections import defaultdict
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.background import BackgroundScheduler # Đảm bảo đã cài đặt: pip install APScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 # =====================--------------(TOKEN BOT)--------------=====================
 # THAY THẾ CÁC TOKEN NÀY BẰNG TOKEN THỰC TẾ CỦA BẠN
+# LƯU Ý: Lỗi 401 Unauthorized thường do TOKEN SAI hoặc HẾT HẠN.
+# VUI LÒNG KIỂM TRA LẠI TẤT CẢ CÁC TOKEN TỪ BOTFATHER ĐỂ ĐẢM BẢO CHÍNH XÁC.
 API_BOT = '7324552224:AAGcEd3dg5OZuIs0bJF6QFfa4B3lgNq2rh8' # Bot chính (dùng cho lệnh /congtien và thông báo riêng cho admin)
 API_BOT2 = '7975395053:AAE6xhLQ-y6BJTlvrNgWjOOWSnZMZ40AxTw' # Bot phòng game Tài Xỉu
 API_BOT3 = '8027877843:AAG1z9OcCkdz8jcT3KnWuKi6BCZvlJhxu2s' # Bot thông báo (có thể không cần nếu chỉ gửi riêng admin)
 
-bot = telebot.TeleBot(API_BOT) # parse_mode=None là mặc định, có thể bỏ
-bot2 = telebot.TeleBot(API_BOT2)
-bot3 = telebot.TeleBot(API_BOT3) # Giữ lại nếu bạn muốn bot3 vẫn gửi thông báo công khai
+# Khởi tạo các bot
+bot = telebot.TeleBot(API_BOT, parse_mode='HTML') # Thiết lập parse_mode mặc định là HTML
+bot2 = telebot.TeleBot(API_BOT2, parse_mode='HTML') # Thiết lập parse_mode mặc định là HTML
+bot3 = telebot.TeleBot(API_BOT3, parse_mode='HTML') # Thiết lập parse_mode mặc định là HTML
 
 # =====================--------------(Cấu hình Admin và Nhóm)--------------=====================
 ADMIN_ID = 6915752059 # THAY THẾ BẰNG ID TELEGRAM CỦA ADMIN
-# Dưới đây là các ID nhóm chat. Mình đặt chúng giống nhau dựa trên ví dụ của bạn.
-# Nếu bạn có các nhóm khác nhau, hãy thay đổi ID cho phù hợp.
+# LƯU Ý: Lỗi "chat not found" thường do ID nhóm sai hoặc bot không có quyền admin trong nhóm.
+# HÃY ĐẢM BẢO BOT ĐƯỢC THÊM VÀO NHÓM VÀ ĐƯỢC CẤP QUYỀN ADMIN ĐẦY ĐỦ.
 GAME_ROOM_ID = -1002781947864 # ID nhóm phòng game Tài Xỉu
-RESULT_CHANNEL_ID = -1002781947864 # ID nhóm thông báo kết quả phòng game (có thể là kênh hoặc nhóm khác)
+RESULT_CHANNEL_ID = -1002781947864 # ID nhóm/kênh thông báo kết quả phòng game (có thể trùng GAME_ROOM_ID hoặc là kênh riêng)
 
 # =====================--------------(Biến toàn cục)--------------=====================
 user_balance = {}
@@ -49,23 +52,35 @@ accepting_bets = False # Trạng thái cho phép đặt cược
 
 def save_balance_to_file():
     """Lưu số dư của người dùng vào file sodu.txt"""
-    with open("sodu.txt", "w") as f:
-        for user_id, balance in user_balance.items():
-            f.write(f"{user_id} {int(balance)}\n") # Lưu dưới dạng số nguyên
+    try:
+        with open("sodu.txt", "w") as f:
+            for user_id, balance in user_balance.items():
+                f.write(f"{user_id} {int(balance)}\n") # Lưu dưới dạng số nguyên
+    except Exception as e:
+        print(f"Lỗi khi lưu số dư vào file: {e}")
 
 def load_balance_from_file():
     """Tải số dư của người dùng từ file sodu.txt"""
-    if os.path.exists("sodu.txt"):
+    global user_balance
+    if not os.path.exists("sodu.txt"):
+        try:
+            open("sodu.txt", "a").close() # Tạo file nếu chưa tồn tại
+        except Exception as e:
+            print(f"Lỗi khi tạo file sodu.txt: {e}")
+            return
+            
+    try:
         with open("sodu.txt", "r") as f:
             for line in f:
-                if line.strip():
+                line = line.strip()
+                if line:
                     try:
-                        user_id, balance_str = line.strip().split()
+                        user_id, balance_str = line.split()
                         user_balance[int(user_id)] = int(float(balance_str)) # Đảm bảo là số nguyên
                     except ValueError:
-                        print(f"Lỗi đọc dòng trong sodu.txt: {line.strip()}")
-    else:
-        open("sodu.txt", "a").close() # Tạo file nếu chưa tồn tại
+                        print(f"Lỗi đọc dòng trong sodu.txt: '{line}' - định dạng không hợp lệ.")
+    except Exception as e:
+        print(f"Lỗi khi tải số dư từ file: {e}")
 
 # Tải số dư khi bot khởi động
 load_balance_from_file()
@@ -77,50 +92,76 @@ atexit.register(save_balance_to_file)
 
 def save_session_to_file():
     """Lưu số phiên hiện tại vào file phien.txt"""
-    with open("phien.txt", "w") as file:
-        file.write(str(current_session))
+    try:
+        with open("phien.txt", "w") as file:
+            file.write(str(current_session))
+    except Exception as e:
+        print(f"Lỗi khi lưu số phiên vào file: {e}")
 
 def load_session_from_file():
     """Tải số phiên hiện tại từ file phien.txt"""
     global current_session
+    if not os.path.exists("phien.txt"):
+        try:
+            open("phien.txt", "a").close() # Tạo file nếu chưa tồn tại
+        except Exception as e:
+            print(f"Lỗi khi tạo file phien.txt: {e}")
+            current_session = 1
+            return
+            
     try:
         with open("phien.txt", "r") as file:
-            current_session = int(file.read().strip())
-    except FileNotFoundError:
-        current_session = 1
-        save_session_to_file() # Tạo file nếu chưa có
+            content = file.read().strip()
+            if content:
+                current_session = int(content)
+            else:
+                current_session = 1
+                save_session_to_file()
     except ValueError:
+        print("Nội dung file phien.txt không hợp lệ. Đặt lại phiên = 1.")
         current_session = 1 # Reset nếu nội dung file không hợp lệ
         save_session_to_file()
+    except Exception as e:
+        print(f"Lỗi khi tải số phiên từ file: {e}")
+        current_session = 1 # Đảm bảo có giá trị mặc định nếu có lỗi
+        save_session_to_file()
+
 
 def save_session_history_to_file():
     """Lưu lịch sử 10 phiên gần nhất vào file matphien.txt"""
-    last_10_sessions = session_results[-10:]
-    display_last_10 = " ".join(
-        ["🔵" if session == 'T' else "🔴" for session in last_10_sessions])
-    with open("matphien.txt", "w", encoding='utf-8') as file:
-        file.write(display_last_10)
+    try:
+        last_10_sessions = session_results[-10:]
+        display_last_10 = " ".join(
+            ["🔵" if session == 'T' else "🔴" for session in last_10_sessions])
+        with open("matphien.txt", "w", encoding='utf-8') as file:
+            file.write(display_last_10)
+    except Exception as e:
+        print(f"Lỗi khi lưu lịch sử phiên vào file: {e}")
 
 def load_session_history_from_file():
     """Tải lịch sử phiên từ file matphien.txt"""
     global session_results
-    try:
-        if os.path.exists("matphien.txt"):
-            with open("matphien.txt", "r", encoding='utf-8') as file:
-                session_history_str = file.read().strip()
-                if session_history_str:
-                    session_history = session_history_str.split()
-                    session_results = [
-                        'T' if session == '🔵' else 'X'
-                        for session in session_history
-                    ]
-                else:
-                    session_results = []
-        else:
+    if not os.path.exists("matphien.txt"):
+        try:
+            open("matphien.txt", "a", encoding='utf-8').close() # Tạo file nếu chưa có
+        except Exception as e:
+            print(f"Lỗi khi tạo file matphien.txt: {e}")
             session_results = []
-            save_session_history_to_file() # Tạo file nếu chưa có
+            return
+
+    try:
+        with open("matphien.txt", "r", encoding='utf-8') as file:
+            session_history_str = file.read().strip()
+            if session_history_str:
+                session_history = session_history_str.split()
+                session_results = [
+                    'T' if s == '🔵' else 'X'
+                    for s in session_history
+                ]
+            else:
+                session_results = []
     except Exception as e:
-        print(f"Lỗi khi tải lịch sử phiên: {e}")
+        print(f"Lỗi khi tải lịch sử phiên từ file: {e}")
         session_results = [] # Đảm bảo session_results là một list rỗng nếu có lỗi
 
 # Tải dữ liệu phiên khi bot khởi động
@@ -132,7 +173,6 @@ load_session_history_from_file()
 def send_dice_room_reply(chat_id):
     """Gửi xúc xắc và trả về giá trị"""
     try:
-        # Sử dụng bot2 để gửi xúc xắc trong phòng game
         message = bot2.send_dice(chat_id=chat_id, emoji="🎲")
         return message.dice.value
     except ApiException as e:
@@ -158,53 +198,66 @@ def check_result_text(dice_sum):
         return 'XỈU'
     return 'Không xác định'
 
+def escape_html(text):
+    """Thoát các ký tự đặc biệt trong HTML"""
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
 def confirm_bet(user_id, bet_type, bet_amount, original_message_id, is_anonymous=False):
     """Xác nhận và xử lý đặt cược của người chơi"""
     global current_session
     global user_balance
 
-    if user_balance.get(user_id, 0) >= bet_amount:
-        if user_id not in user_bets:
-            user_bets[user_id] = {'T': 0, 'X': 0}
-
-        # Kiểm tra xem người chơi đã cược mặt đối diện chưa
-        opposite_bet_type = 'T' if bet_type.upper() == 'X' else 'X'
-        if user_bets[user_id][opposite_bet_type] > 0:
-            try:
-                bot2.send_message(GAME_ROOM_ID, "❌ Không được cược cả hai bên trong một phiên.", reply_to_message_id=original_message_id)
-            except ApiException as e:
-                print(f"Lỗi gửi tin nhắn đến nhóm: {e}")
-            return False
-
-        user_bets[user_id][bet_type.upper()] += bet_amount
-        user_balance[user_id] -= bet_amount
-        save_balance_to_file()
-
-        encoded_user_id = f"***{str(user_id)[-4:]}"
-        remaining_balance = user_balance[user_id]
-
+    if user_balance.get(user_id, 0) < bet_amount:
         if is_anonymous:
-            confirmation_message = f"🏮 **Đặt thành công kỳ XX #`{current_session}`\nLệnh {bet_type}\nSố tiền cược: `{int(bet_amount):,}`\nNgười cược: `(Ẩn Danh)`**"
-            bot2.send_message(GAME_ROOM_ID, confirmation_message, parse_mode='Markdown')
-        else:
-            confirmation_message = f"🏮 **Đặt thành công kỳ #`{current_session}`\nLệnh {bet_type}\nSố tiền cược: `{int(bet_amount):,}`\nNgười cược: `({encoded_user_id})`**"
-            bot2.send_message(GAME_ROOM_ID, confirmation_message, reply_to_message_id=original_message_id, parse_mode='Markdown')
-
-        confirmation_message1 = f"🏮 **Bạn đặt thành công kỳ XX #`{current_session}`\nLệnh: {bet_type} - {int(bet_amount):,}\nSố dư còn lại: {int(remaining_balance):,}**"
-        try:
-            bot.send_message(chat_id=user_id, text=confirmation_message1, parse_mode='Markdown')
-        except ApiException as e:
-            print(f"Không thể gửi tin nhắn xác nhận cho người dùng {user_id}: {e}")
-
-        return True
-    else:
-        if is_anonymous:
-            encoded_user_id = f"(Ẩn Danh)"
-            bot2.send_message(GAME_ROOM_ID, f"❌ {encoded_user_id} Không đủ số dư để đặt cược.")
+            bot2.send_message(GAME_ROOM_ID, f"❌ (Ẩn Danh) Không đủ số dư để đặt cược.")
         else:
             encoded_user_id = f"***{str(user_id)[-4:]}"
             bot2.send_message(GAME_ROOM_ID, f"❌ {encoded_user_id} Không đủ số dư để đặt cược.", reply_to_message_id=original_message_id)
         return False
+
+    if user_id not in user_bets:
+        user_bets[user_id] = {'T': 0, 'X': 0}
+
+    opposite_bet_type = 'T' if bet_type.upper() == 'X' else 'X'
+    if user_bets[user_id][opposite_bet_type] > 0:
+        bot2.send_message(GAME_ROOM_ID, "❌ Không được cược cả hai bên trong một phiên.", reply_to_message_id=original_message_id)
+        return False
+
+    user_bets[user_id][bet_type.upper()] += bet_amount
+    user_balance[user_id] -= bet_amount
+    save_balance_to_file()
+
+    encoded_user_id = f"***{str(user_id)[-4:]}"
+    remaining_balance = user_balance[user_id]
+
+    if is_anonymous:
+        confirmation_message = (
+            f"🏮 <b>Đặt thành công kỳ XX #{current_session}</b>\n"
+            f"Lệnh {bet_type}\n"
+            f"Số tiền cược: <code>{int(bet_amount):,}</code>\n"
+            f"Người cược: <code>(Ẩn Danh)</code>"
+        )
+        bot2.send_message(GAME_ROOM_ID, confirmation_message)
+    else:
+        confirmation_message = (
+            f"🏮 <b>Đặt thành công kỳ #{current_session}</b>\n"
+            f"Lệnh {bet_type}\n"
+            f"Số tiền cược: <code>{int(bet_amount):,}</code>\n"
+            f"Người cược: <code>({encoded_user_id})</code>"
+        )
+        bot2.send_message(GAME_ROOM_ID, confirmation_message, reply_to_message_id=original_message_id)
+
+    confirmation_message_private = (
+        f"🏮 <b>Bạn đặt thành công kỳ XX #{current_session}</b>\n"
+        f"Lệnh: {bet_type} - {int(bet_amount):,}\n"
+        f"Số dư còn lại: {int(remaining_balance):,}"
+    )
+    try:
+        bot.send_message(chat_id=user_id, text=confirmation_message_private)
+    except ApiException as e:
+        print(f"Không thể gửi tin nhắn xác nhận riêng cho người dùng {user_id}: {e}")
+
+    return True
 
 def calculate_user_winnings(user_id, game_result):
     """Tính toán tiền thắng cho người chơi"""
@@ -233,7 +286,9 @@ def turn_on_group_chat():
     try:
         bot2.set_chat_permissions(GAME_ROOM_ID, permissions)
     except ApiException as e:
-        print(f"Lỗi khi bật quyền nhắn tin: {e}")
+        print(f"Lỗi API khi bật quyền nhắn tin trong nhóm {GAME_ROOM_ID}: {e}. Đảm bảo bot là admin.")
+    except Exception as e:
+        print(f"Lỗi không xác định khi bật quyền nhắn tin: {e}")
 
 def turn_off_group_chat():
     """Tắt quyền gửi tin nhắn trong nhóm game"""
@@ -241,7 +296,9 @@ def turn_off_group_chat():
     try:
         bot2.set_chat_permissions(GAME_ROOM_ID, permissions)
     except ApiException as e:
-        print(f"Lỗi khi tắt quyền nhắn tin: {e}")
+        print(f"Lỗi API khi tắt quyền nhắn tin trong nhóm {GAME_ROOM_ID}: {e}. Đảm bảo bot là admin.")
+    except Exception as e:
+        print(f"Lỗi không xác định khi tắt quyền nhắn tin: {e}")
 
 # =====================--------------(Luồng Game)--------------=====================
 
@@ -260,20 +317,19 @@ def start_game():
 
     turn_on_group_chat()
     
-    # Gửi thông báo bắt đầu phiên cược
+    # Gửi thông báo bắt đầu phiên cược (sử dụng HTML)
     try:
         bot2.send_message(
             GAME_ROOM_ID,
-            f"<blockquote> Mời Bạn Đặt Cược Phiên #`{current_session}`</blockquote>\n\n"
-            f"◉** Cách Chơi**: `T` [ số tiền ] `X` [ số tiền ]\n"
-            f"◉** Cách Chơi**: `T MAX` `X MAX`\n\n"
-            f"◉ Ví Dụ: **T** 10000 & **X** 10000\n\n"
-            f"◉** Trả thưởng cho người thắng *1.95**\n"
-            f"◉** Chỉ được cược 1 mặt trong phiên**\n"
-            f"◉** Min cược: 3.000 - Max cược: 300.000**\n\n"
-            f"◉** Bắt đầu cược thời gian [ 90s ]**\n"
-            f"😘 **Mời các đại gia ra tay cược mạnh nhé !**\n",
-            parse_mode='Markdown'
+            f"<blockquote><b>Mời Bạn Đặt Cược Phiên #{current_session}</b></blockquote>\n\n"
+            f"&#x25CF; <b>Cách Chơi</b>: <code>T [số tiền]</code> hoặc <code>X [số tiền]</code>\n"
+            f"&#x25CF; <b>Ví Dụ</b>: <code>T 10000</code> &amp; <code>X 10000</code>\n\n"
+            f"&#x25CF; <b>Trả thưởng</b> cho người thắng <b>x1.95</b>\n"
+            f"&#x25CF; <b>Chỉ được cược 1 mặt</b> trong phiên\n"
+            f"&#x25CF; <b>Min cược</b>: 3.000 VNĐ - <b>Max cược</b>: 300.000 VNĐ\n\n"
+            f"&#x25CF; Bắt đầu cược thời gian [<b>90s</b>]\n"
+            f"😘 <b>Mời các đại gia ra tay cược mạnh nhé!</b>",
+            parse_mode='HTML' # Rõ ràng chỉ định parse_mode
         )
     except ApiException as e:
         print(f"Lỗi gửi tin nhắn bắt đầu game: {e}")
@@ -281,16 +337,16 @@ def start_game():
 
     # Thời gian chờ và cập nhật tổng cược
     time.sleep(30) # 60s còn lại
-    update_bet_summary()
+    update_bet_summary("60s")
 
     time.sleep(30) # 30s còn lại
-    update_bet_summary()
+    update_bet_summary("30s")
 
     time.sleep(20) # 10s còn lại
-    update_bet_summary()
+    update_bet_summary("10s")
 
     time.sleep(10) # Hết thời gian cược
-    update_bet_summary(final=True)
+    update_bet_summary("Hết giờ", final=True)
 
     turn_off_group_chat() # Tắt nhận cược
     accepting_bets = False
@@ -299,7 +355,7 @@ def start_game():
     try:
         bot2.send_message(
             GAME_ROOM_ID,
-            f"**Bắt đầu tung xúc xắc phiên #`{current_session}`**", parse_mode='Markdown')
+            f"<b>Bắt đầu tung xúc xắc phiên #{current_session}</b>", parse_mode='HTML')
         time.sleep(2)
 
         dice_results = []
@@ -307,7 +363,9 @@ def start_game():
             dice_value = send_dice_room_reply(GAME_ROOM_ID)
             if dice_value is None:
                 print("Không thể lấy giá trị xúc xắc. Bỏ qua phiên này.")
-                return # Thoát nếu không tung được xúc xắc
+                # Gửi thông báo lỗi nếu không tung được xúc xắc
+                bot2.send_message(GAME_ROOM_ID, "⚠️ Lỗi hệ thống, không thể tung xúc xắc. Phiên này bị hủy.")
+                return 
             dice_results.append(dice_value)
             time.sleep(1) # Đợi một chút giữa mỗi lần tung
 
@@ -321,21 +379,21 @@ def start_game():
 
         save_session_history_to_file()
 
-        total_bet_T = sum([b['T'] for b in user_bets.values()])
-        total_bet_X = sum([b['X'] for b in user_bets.values()])
+        total_bet_T = sum([b['T'] for b in user_bets.values() if 'T' in b]) # Đảm bảo kiểm tra key
+        total_bet_X = sum([b['X'] for b in user_bets.values() if 'X' in b]) # Đảm bảo kiểm tra key
         
         # GỬI KẾT QUẢ RIÊNG CHO ADMIN TRƯỚC KHI CÔNG KHAI
         admin_private_message = (
-            f"🎲 **KẾT QUẢ RIÊNG CHO ADMIN** 🎲\n"
-            f"Phiên #`{current_session}`\n"
+            f"🎲 <b>KẾT QUẢ RIÊNG CHO ADMIN</b> 🎲\n"
+            f"Phiên #{current_session}\n"
             f"Xúc xắc: {dice_results} (Tổng: {dice_sum})\n"
-            f"Kết quả: **{game_result_text}**\n"
+            f"Kết quả: <b>{game_result_text}</b>\n"
             f"Loại: {'🔵 Tài' if game_result_type == 'T' else '🔴 Xỉu'}\n"
             f"----------------------------------------\n"
             f"Tổng cược Tài: {int(total_bet_T):,} VNĐ\n"
             f"Tổng cược Xỉu: {int(total_bet_X):,} VNĐ\n"
         )
-        bot.send_message(ADMIN_ID, admin_private_message, parse_mode='Markdown')
+        bot.send_message(ADMIN_ID, admin_private_message, parse_mode='HTML')
         time.sleep(2) # Đợi một chút trước khi công khai
 
         send_game_result_and_process_winnings(dice_results, dice_sum, game_result_type)
@@ -344,36 +402,30 @@ def start_game():
         print(f"Lỗi trong quá trình chạy game: {e}")
         traceback.print_exc()
 
-def update_bet_summary(final=False):
+def update_bet_summary(time_label, final=False):
     """Cập nhật và gửi tổng cược hiện tại"""
     total_bet_T = sum([user_bets[user_id]['T'] for user_id in user_bets if 'T' in user_bets[user_id]])
     total_bet_X = sum([user_bets[user_id]['X'] for user_id in user_bets if 'X' in user_bets[user_id]])
     total_bet_TAI_users = sum([1 for user_id in user_bets if user_bets[user_id]['T'] > 0])
     total_bet_XIU_users = sum([1 for user_id in user_bets if user_bets[user_id]['X'] > 0])
 
-    time_remaining_str = ""
-    if not final:
-        if accepting_bets: # Kiểm tra accepting_bets để tránh lỗi nếu hàm được gọi sau khi đã tắt
-             # Thời gian này chỉ là ước lượng, không chính xác theo thời gian thực của phiên game
-            time_remaining_str = "**⏰ Còn xx giây để cược phiên #`{current_session}`**\n" # Cập nhật thủ công hoặc tính toán chính xác hơn nếu có đồng hồ đếm ngược
-    else:
-        time_remaining_str = f"**⏰ Hết thời gian phiên #[`{current_session}`]**\n"
+    time_status_str = f"⏰ Còn {time_label} để cược phiên #{current_session}" if not final else f"⏰ Hết thời gian phiên #{current_session}"
 
     try:
         bot2.send_message(
             GAME_ROOM_ID,
             (
-                time_remaining_str +
+                f"<b>{time_status_str}</b>\n"
                 f"<blockquote>Tổng Cược 🔵 | Tổng Cược 🔴</blockquote>\n"
-                f"**🔵 TÀI: `{int(total_bet_T):,}`**\n"
+                f"🔵 <b>TÀI</b>: <code>{int(total_bet_T):,}</code>\n"
                 f"\n"
-                f"**🔴 XỈU: `{int(total_bet_X):,}`**\n\n"
+                f"🔴 <b>XỈU</b>: <code>{int(total_bet_X):,}</code>\n\n"
                 f"<blockquote>Số Người Cược TÀI -- XỈU</blockquote>\n"
-                f"**👁‍🗨 TÀI: `{int(total_bet_TAI_users):,}` Người cược.**\n"
+                f"👁‍🗨 <b>TÀI</b>: <code>{int(total_bet_TAI_users):,}</code> Người cược.\n"
                 f"\n"
-                f"**👁‍🗨 XỈN: `{int(total_bet_XIU_users):,}` Người cược.**\n\n"
+                f"👁‍🗨 <b>XỈU</b>: <code>{int(total_bet_XIU_users):,}</code> Người cược.\n\n"
             ),
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
     except ApiException as e:
         print(f"Lỗi gửi tin nhắn tổng cược: {e}")
@@ -392,10 +444,10 @@ def send_game_result_and_process_winnings(dice_results, dice_sum, game_result_ty
     total_losses = 0
     user_winnings_dict = {}
 
-    users_to_process = list(user_bets.keys()) # Lấy danh sách người dùng đã cược trong phiên
+    users_who_bet = list(user_bets.keys()) # Lấy danh sách người dùng đã cược trong phiên
     
     # Xử lý thắng/thua cho từng người chơi
-    for user_id in users_to_process:
+    for user_id in users_who_bet:
         if user_id not in processed_users: # Đảm bảo chỉ xử lý một lần
             user_win_amount = calculate_user_winnings(user_id, game_result_type)
             user_lose_amount = calculate_user_losses(user_id, game_result_type)
@@ -412,25 +464,25 @@ def send_game_result_and_process_winnings(dice_results, dice_sum, game_result_ty
             message_text = ""
             if user_win_amount > 0:
                 message_text = (
-                    f"🔹️ Phiên XX#`{current_session}` Bạn Đã Thắng\n"
-                    f"Số tiền thắng: **{int(user_win_amount):,}**\n"
-                    f"Số dư mới: **{int(balance):,}**"
+                    f"🔹️ Phiên XX#{current_session} Bạn Đã Thắng\n"
+                    f"Số tiền thắng: <b>{int(user_win_amount):,}</b>\n"
+                    f"Số dư mới: <b>{int(balance):,}</b>"
                 )
             elif user_lose_amount > 0:
                 message_text = (
-                    f"🔹️ Phiên XX#`{current_session}` Bạn Đã Thua\n"
-                    f"Số tiền thua: **{int(user_lose_amount):,}**\n"
-                    f"Số dư mới: **{int(balance):,}**"
+                    f"🔹️ Phiên XX#{current_session} Bạn Đã Thua\n"
+                    f"Số tiền thua: <b>{int(user_lose_amount):,}</b>\n"
+                    f"Số dư mới: <b>{int(balance):,}</b>"
                 )
-            else: # Không thắng không thua (ví dụ không cược hoặc cược hòa)
+            else: # Không thắng không thua (ví dụ không cược)
                 continue 
 
             try:
-                bot.send_message(chat_id=user_id, text=message_text, parse_mode='Markdown')
+                bot.send_message(chat_id=user_id, text=message_text, parse_mode='HTML')
             except ApiException as e:
-                print(f"Không thể gửi tin nhắn kết quả cho người dùng {user_id}: {e}")
+                print(f"Không thể gửi tin nhắn kết quả riêng cho người dùng {user_id}: {e}")
             except Exception as e:
-                print(f"Lỗi khi gửi tin nhắn kết quả cho {user_id}: {e}")
+                print(f"Lỗi không xác định khi gửi tin nhắn kết quả cho {user_id}: {e}")
 
     save_balance_to_file() # Lưu lại số dư sau khi cập nhật tất cả
 
@@ -439,55 +491,52 @@ def send_game_result_and_process_winnings(dice_results, dice_sum, game_result_ty
     leaderboard_message = ""
     if sorted_user_winnings:
         leaderboard_message = "\n".join([
-            f"┃{i+1} - `{str(uid)[-4:]}` - `{int(winnings):,}`"
+            f"&#x2503;{i+1} - <code>{str(uid)[-4:]}</code> - <code>{int(winnings):,}</code>"
             for i, (uid, winnings) in enumerate(sorted_user_winnings[:10])
         ])
     else:
-        leaderboard_message = "┃ Không có người thắng trong phiên này."
+        leaderboard_message = "&#x2503; Không có người thắng trong phiên này."
 
     time.sleep(4)
     keyboard = types.InlineKeyboardMarkup()
-    # Thay đổi URL này nếu bạn có kênh kết quả riêng
     url_button = types.InlineKeyboardButton(text="Kết Quả TX [ Room ]", url="https://t.me/kqtxroomluxury") 
     keyboard.add(url_button)
     
     result_message_to_group = (
-        f"**🌸 Kết Quả Xúc Xắc Phiên #`{current_session}`\n"
-        f"┏━━━━━━━━━━━━━━━━┓\n"
-        f"┃  {' '.join(map(str, dice_results))}  ({dice_sum})  {game_result_text} {last_1_session_display}\n"
-        f"┃\n"
-        f"┃ 🔎 Tổng Thắng: `{int(total_winnings):,}`\n"
-        f"┃\n"
-        f"┃ 🔎 Tổng Thua: `{int(total_losses):,}`\n"
-        f"┃━━━━━━━━━━━━━━━━\n"
-        f"┃ 🏆 Top Bảng Xếp Hạng #[`{current_session}`]\n"
-        f"┃ TOP - ID - Tổng thắng\n"
+        f"<b>🌸 Kết Quả Xúc Xắc Phiên #{current_session}</b>\n"
+        f"&#x250F;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2513;\n"
+        f"&#x2503;  {escape_html(' '.join(map(str, dice_results)))}  ({dice_sum})  {game_result_text} {last_1_session_display}\n"
+        f"&#x2503;\n"
+        f"&#x2503; &#x1F50E; Tổng Thắng: <code>{int(total_winnings):,}</code>\n"
+        f"&#x2503;\n"
+        f"&#x2503; &#x1F50E; Tổng Thua: <code>{int(total_losses):,}</code>\n"
+        f"&#x2503;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;\n"
+        f"&#x2503; &#x1F3C6; Top Bảng Xếp Hạng #{current_session}\n"
+        f"&#x2503; TOP - ID - Tổng thắng\n"
         f"{leaderboard_message}\n"
-        f"┗━━━━━━━━━━━━━━━━┛\n"
+        f"&#x2517;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x2501;&#x251B;\n"
         f"Lịch Sử Phiên Gần Nhất\n\n"
         f"{display_last_10}\n\n"
-        f"      🔵  Tài       |      🔴   XỈU\n**"
+        f"      🔵  Tài       |      🔴   XỈU\n"
     )
 
     try:
         bot2.send_message(
             GAME_ROOM_ID,
             result_message_to_group,
-            parse_mode='Markdown',
+            parse_mode='HTML',
             reply_markup=keyboard
         )
     except ApiException as e:
-        print(f"Lỗi gửi tin nhắn kết quả đến nhóm game: {e}")
+        print(f"Lỗi gửi tin nhắn kết quả đến nhóm game {GAME_ROOM_ID}: {e}")
 
     # Gửi kết quả công khai ra nhóm kết quả nếu có
     if RESULT_CHANNEL_ID and RESULT_CHANNEL_ID != GAME_ROOM_ID:
         try:
-            bot3.send_message(RESULT_CHANNEL_ID, result_message_to_group, parse_mode='Markdown', reply_markup=keyboard)
+            bot3.send_message(RESULT_CHANNEL_ID, result_message_to_group, parse_mode='HTML', reply_markup=keyboard)
         except ApiException as e:
-            print(f"Lỗi gửi tin nhắn kết quả đến kênh kết quả: {e}")
+            print(f"Lỗi gửi tin nhắn kết quả đến kênh kết quả {RESULT_CHANNEL_ID}: {e}")
 
-    # user_bets.clear() # Xóa cược của phiên hiện tại - đã được clear ở đầu start_game()
-    # processed_users.clear() # Đã được clear ở đầu start_game()
     time.sleep(3)
 
 def game_timer():
@@ -512,7 +561,7 @@ def congtien(message):
     try:
         command_parts = message.text.split()
         if len(command_parts) != 3:
-            bot.reply_to(message, "⚠️ Cú pháp không hợp lệ. Vui lòng nhập đúng: `/congtien [ID người chơi] [số tiền]`", parse_mode='Markdown')
+            bot.reply_to(message, "⚠️ Cú pháp không hợp lệ. Vui lòng nhập đúng: <code>/congtien [ID người chơi] [số tiền]</code>", parse_mode='HTML')
             return
 
         target_user_id = int(command_parts[1])
@@ -530,14 +579,15 @@ def congtien(message):
 
         save_balance_to_file() # Lưu số dư đã cập nhật
 
-        bot.reply_to(message, f"✅ Đã cộng thành công **{amount:,} VNĐ** vào tài khoản của ID **{target_user_id}**.", parse_mode='Markdown')
+        bot.reply_to(message, f"✅ Đã cộng thành công <b>{amount:,} VNĐ</b> vào tài khoản của ID <b>{target_user_id}</b>.", parse_mode='HTML')
         
         new_balance = user_balance[target_user_id]
         try:
             bot.send_message(
                 target_user_id, 
-                f"🎉 **Bạn vừa được cộng {amount:,} VNĐ vào tài khoản.\nSố dư hiện tại của bạn: {new_balance:,} VNĐ**", 
-                parse_mode='Markdown'
+                f"🎉 <b>Bạn vừa được cộng {amount:,} VNĐ vào tài khoản.</b>\n"
+                f"Số dư hiện tại của bạn: <b>{new_balance:,} VNĐ</b>", 
+                parse_mode='HTML'
             )
         except ApiException as e:
             print(f"Không thể gửi tin nhắn cho người dùng {target_user_id} (có thể do người dùng chặn bot): {e}")
@@ -563,22 +613,19 @@ def handle_message_in_gameroom(message):
         return
 
     # Luôn cố gắng xóa tin nhắn không phải lệnh cược ngay lập tức
-    # Điều này giúp giữ cho cuộc trò chuyện sạch sẽ
     if not accepting_bets:
         try:
             bot2.delete_message(message.chat.id, message.message_id)
-            # Thêm độ trễ nhỏ để tránh bị giới hạn tốc độ API
-            time.sleep(0.1) 
+            time.sleep(0.05) # Độ trễ nhỏ
             return # Dừng xử lý nếu không chấp nhận cược
         except ApiException as e:
-            # Lỗi 400 Bad Request thường do tin nhắn đã bị xóa hoặc không tồn tại
-            if "Bad Request: message to delete not found" in str(e):
+            if "message to delete not found" in str(e): # Tin nhắn đã bị xóa
                 pass
             else:
                 print(f"Lỗi khi xóa tin nhắn khi hết thời gian cược: {e}")
         except Exception as e:
             print(f"Lỗi không xác định khi xóa tin nhắn: {e}")
-        return # Dừng xử lý nếu không chấp nhận cược
+        return 
 
     # Nếu đang chấp nhận cược
     if message.text:
@@ -594,7 +641,6 @@ def handle_message_in_gameroom(message):
 
                 try:
                     if bet_amount_str.upper() == 'MAX':
-                        # Cược tối đa là số dư hiện có hoặc 300.000, lấy giá trị nhỏ hơn
                         max_possible_bet = min(user_balance.get(user_id, 0), 300000)
                         if max_possible_bet >= 3000:
                             bet_amount = max_possible_bet
@@ -614,36 +660,27 @@ def handle_message_in_gameroom(message):
                     print(f"Lỗi API Telegram khi xử lý cược: {e}")
                 except Exception as e:
                     print(f"Lỗi không xác định khi xử lý cược: {e}")
-            else:
-                # Xóa tin nhắn không phải lệnh T/X nhưng vẫn trong lúc nhận cược
+            else: # Tin nhắn có 2 phần nhưng không phải T/X
                 try:
                     bot2.delete_message(message.chat.id, message.message_id)
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                 except ApiException as e:
-                    if "Bad Request: message to delete not found" in str(e):
-                        pass
-                    else:
-                        print(f"Lỗi khi xóa tin nhắn không hợp lệ: {e}")
-        else:
-            # Xóa tin nhắn không phải lệnh cược hợp lệ (ví dụ: quá nhiều từ)
+                    if "message to delete not found" in str(e): pass
+                    else: print(f"Lỗi khi xóa tin nhắn không hợp lệ (format): {e}")
+        else: # Tin nhắn không có 2 phần
             try:
                 bot2.delete_message(message.chat.id, message.message_id)
-                time.sleep(0.1)
+                time.sleep(0.05)
             except ApiException as e:
-                if "Bad Request: message to delete not found" in str(e):
-                    pass
-                else:
-                    print(f"Lỗi khi xóa tin nhắn không hợp lệ: {e}")
-    else:
-        # Xóa tin nhắn không có text (ví dụ: ảnh, sticker) trong lúc nhận cược
+                if "message to delete not found" in str(e): pass
+                else: print(f"Lỗi khi xóa tin nhắn không hợp lệ (số từ): {e}")
+    else: # Tin nhắn không có text (ví dụ: ảnh, sticker)
         try:
             bot2.delete_message(message.chat.id, message.message_id)
-            time.sleep(0.1)
+            time.sleep(0.05)
         except ApiException as e:
-            if "Bad Request: message to delete not found" in str(e):
-                pass
-            else:
-                print(f"Lỗi khi xóa tin nhắn không hợp lệ: {e}")
+            if "message to delete not found" in str(e): pass
+            else: print(f"Lỗi khi xóa tin nhắn không hợp lệ (không text): {e}")
 
 
 # =====================--------------(Kiểm tra file)--------------=====================
@@ -667,14 +704,23 @@ def check_file():
 # =====================--------------(Khởi chạy Bot)--------------=====================
 def poll_bot(bot_instance):
     """Hàm để chạy polling cho từng bot trong một luồng riêng"""
-    try:
-        bot_info = bot_instance.get_me()
-        print(f"Đang khởi động bot: @{bot_info.username}")
-        bot_instance.polling(none_stop=True, interval=0, timeout=30)
-    except Exception as e:
-        print(f"Lỗi khi polling bot: {e}. Thử lại sau 5 giây...")
-        time.sleep(5) # Đợi trước khi thử lại
-        poll_bot(bot_instance) # Gọi lại chính nó để thử lại
+    while True: # Vòng lặp vô hạn để tự động khởi động lại polling khi có lỗi
+        try:
+            bot_info = bot_instance.get_me()
+            print(f"Đang khởi động bot: @{bot_info.username}")
+            bot_instance.polling(none_stop=True, interval=0, timeout=30)
+        except ApiException as e:
+            # Xử lý các lỗi API cụ thể
+            if e.result_json and e.result_json.get('error_code') == 401:
+                print(f"Lỗi Unauthorized (401) cho bot @{bot_info.username}. Vui lòng kiểm tra lại token!")
+            else:
+                print(f"Lỗi API khi polling bot @{bot_info.username}: {e}. Thử lại sau 5 giây...")
+            traceback.print_exc() # In đầy đủ lỗi để dễ debug
+            time.sleep(5) 
+        except Exception as e:
+            print(f"Lỗi không xác định khi polling bot @{bot_info.username}: {e}. Thử lại sau 5 giây...")
+            traceback.print_exc()
+            time.sleep(5) 
 
 if check_file():
     # Khởi tạo và chạy các luồng cho từng bot
